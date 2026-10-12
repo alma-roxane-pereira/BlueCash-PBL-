@@ -32,6 +32,12 @@ venv/
 .pytest_cache/
 *.egg-info/
 
+# --- Runtime databases ------------------------------------------------------
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
 # --- Secrets: reference server runtime state --------------------------------
 # server.py writes four 2048-bit RSA private keys here on first run.
 mint_keys.json

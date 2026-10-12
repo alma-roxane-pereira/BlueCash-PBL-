@@ -1,0 +1,14 @@
+[tool.pytest.ini_options]
+# Tests import `app.*`, so the backend directory is the import root.
+pythonpath = ["."]
+testpaths = ["tests"]
+
+# The differential suite spawns two server processes and takes seconds rather
+# than milliseconds, so it is deselected by default to keep the normal run fast.
+# Run it explicitly:
+#     ../.venv/Scripts/python.exe -m pytest tests/differential -m differential
+addopts = "-q -m 'not differential'"
+
+markers = [
+    "differential: compares the backend against the reference server; starts two local server processes",
+]
