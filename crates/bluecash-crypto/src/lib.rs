@@ -33,6 +33,9 @@ pub mod merkle;
 pub mod rng;
 pub mod shares;
 
+#[cfg(feature = "python")]
+mod ffi_py;
+
 pub use blind::{sign_blinded, unblind, BlindError, Blinded};
 pub use ed25519::{Ed25519Error, Keypair};
 pub use fdh::fdh;

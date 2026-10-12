@@ -1,0 +1,25 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "bluecash-crypto"
+version = "0.1.0"
+description = "Shared cryptographic core for the BlueCash Protocol."
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.maturin]
+# The PyO3 bindings live behind an optional cargo feature so that plain
+# `cargo test` does not need a Python interpreter to link against.
+features = ["python"]
+module-name = "bluecash_crypto"
+# Offline by default: every dependency is expected to be in the local cargo
+# registry cache. Remove this to allow downloads.
+offline = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

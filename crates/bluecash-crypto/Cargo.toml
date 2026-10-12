@@ -7,7 +7,23 @@ description = "Shared cryptographic core for the BlueCash Protocol (Person A)."
 license = "MIT OR Apache-2.0"
 publish = false
 
+[lib]
+# `bluecash_crypto` is the Python import name; cdylib produces the extension
+# module, rlib keeps the crate usable as a normal Rust dependency.
+name = "bluecash_crypto"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# PyO3 is opt-in so `cargo test`/`clippy` build and link without a Python
+# interpreter. maturin turns it on via [tool.maturin] features in pyproject.toml.
+python = ["dep:pyo3"]
+
 [dependencies]
+# Python bindings, optional — see the `python` feature above.
+pyo3 = { version = "0.29.3", features = [
+    "extension-module",
+    "num-bigint",
+], optional = true }
 # SHA-256 for the full-domain hash and the Merkle tree.
 sha2 = "0.10.9"
 # Arbitrary-precision integers: the `mod n` reduction in the FDH, the RSA blind
