@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+# BlueCash Protocol — root ignore rules
+# Patterns are intentionally UNANCHORED so they match at any nesting depth
+# (an anchored "/build" would miss app/build, which is ~171 MB).
+# ---------------------------------------------------------------------------
+
+# --- Build output -----------------------------------------------------------
+build/
+target/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# --- Gradle / Kotlin local state --------------------------------------------
+.gradle/
+.kotlin/
+
+# --- IDE --------------------------------------------------------------------
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# --- Local machine configuration (paths differ per developer) ---------------
+local.properties
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# --- Secrets: reference server runtime state --------------------------------
+# server.py writes four 2048-bit RSA private keys here on first run.
+mint_keys.json
+state.json
+
+# --- Secrets: keys, keystores, credentials ----------------------------------
+*.pem
+*.key
+*.jks
+*.keystore
+*.p12
+*.pfx
+.env
+.env.*
+secrets.json
+credentials.json
+keystore.properties
+
+# --- OS ---------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
