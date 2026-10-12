@@ -1,0 +1,29 @@
+[package]
+name = "bluecash-crypto"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Shared cryptographic core for the BlueCash Protocol (Person A)."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# SHA-256 for the full-domain hash and the Merkle tree.
+sha2 = "0.10.9"
+# Arbitrary-precision integers: the `mod n` reduction in the FDH, the RSA blind
+# signature arithmetic, and the 2048-bit prime-field share scheme.
+num-bigint = "0.4.8"
+# Needed for `modinverse` (unblinding) and `gcd` (blinding-factor selection).
+num-integer = "0.1.47"
+num-traits = "0.2.19"
+# Ed25519 (RFC 8032) — matches the BouncyCastle Ed25519Signer used by the client.
+ed25519-dalek = "2.2.0"
+# OS randomness only; no `rand` dependency, to keep the offline tree minimal.
+getrandom = "0.2.17"
+
+[dev-dependencies]
+# Decoding the hex test vectors generated from the reference server.
+hex = "0.4.3"
+
+[lints.rust]
+missing_docs = "warn"
