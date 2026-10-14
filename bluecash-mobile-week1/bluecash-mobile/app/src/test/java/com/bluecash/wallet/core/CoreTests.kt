@@ -84,6 +84,58 @@ class PrimitiveTests {
         }
     }
 
+    // ---- BLE packet sizing ------------------------------------------------------------
+    //
+    // GATT caps an attribute value at 512 bytes however large the ATT MTU gets. Phones
+    // negotiate 517, and the old packet size of `mtu - 3` came to 514 -- so the first
+    // message bigger than one packet (AUTH, which carries a 2048-bit c0) was refused with
+    // "notification should not be longer than max length of an attribute value".
+
+    @Test fun packetSizeFollowsTheMtuButNeverPassesTheGattLimit() {
+        assertEquals(20, Framing.packetSize(23))      // smallest MTU: the 20-byte floor
+        assertEquals(244, Framing.packetSize(247))    // what the app asks for
+        assertEquals(512, Framing.packetSize(517))    // what phones actually agree: capped
+        assertEquals(512, Framing.MAX_ATTRIBUTE_LEN)
+    }
+
+    @Test fun noChunkExceedsTheGattLimitAtAnyMtu() {
+        val msg = Rand.bytes(4096)
+        for (mtu in 23..517) {
+            val size = Framing.packetSize(mtu)
+            assertTrue("mtu $mtu gave packet size $size", size <= Framing.MAX_ATTRIBUTE_LEN)
+            for (p in Framing.chunk(msg, size)) {
+                assertTrue("mtu $mtu produced a ${p.size}-byte packet", p.size <= Framing.MAX_ATTRIBUTE_LEN)
+            }
+        }
+    }
+
+    @Test fun authSizedAndLargeMessagesRoundTripAtTheNegotiatedMtu() {
+        // 900 bytes stands in for AUTH (credential with a 512-hex c0 plus signatures);
+        // 8 KB stands in for a multi-token TOKENS or RECEIPTS payload.
+        for (size in listOf(513, 900, 8192)) {
+            val msg = Rand.bytes(size)
+            val r = Framing.Reassembler()
+            var out: ByteArray? = null
+            for (p in Framing.chunk(msg, Framing.packetSize(517))) {
+                assertTrue(p.size <= Framing.MAX_ATTRIBUTE_LEN)
+                out = r.feed(p) ?: out
+            }
+            assertArrayEquals("size $size", msg, out)
+        }
+    }
+
+    @Test fun anAbandonedTransferLeavesNothingBehind() {
+        val r = Framing.Reassembler()
+        val abandoned = Framing.chunk(Rand.bytes(2000), Framing.packetSize(517))
+        assertNull("a partial transfer must not complete", r.feed(abandoned.first()))
+
+        // A new transfer starts with a FIRST packet, which must discard the stale bytes.
+        val msg = Rand.bytes(900)
+        var out: ByteArray? = null
+        for (p in Framing.chunk(msg, Framing.packetSize(517))) out = r.feed(p) ?: out
+        assertArrayEquals(msg, out)
+    }
+
     @Test fun secureChannelDetectsTamperReplayAndReorder() {
         val k1 = Rand.bytes(32); val k2 = Rand.bytes(32)
         val a = SecureChannel(k1, k2); val b = SecureChannel(k2, k1)
@@ -167,6 +219,50 @@ class EndToEndTests {
         val r = shop.wallet.pendingReceipts().single()
         val a0 = alice.wallet.identitySecret()
         assertNotEquals(a0, bigFromHex(r.y))
+    }
+
+    @Test fun sameMerchantRejectsAReplayedToken() {
+        // The only double-spend defence that works while both phones are offline: the
+        // merchant remembers the tokens it has already taken. Across merchants the fraud
+        // is caught later, at settlement; here it has to be refused on the spot.
+        val mint = SimulatedMint(MemoryKV())
+        val alice = Phone("alice", mint).setup(fund = 100)
+        val shop = Phone("shop", mint).setup()
+
+        // Alice keeps a copy of her vault from before the payment, so the clone still
+        // believes the token is unspent -- a payer who kept a backup, not a protocol flaw.
+        val backup = MemoryKV().also { it.copyFrom(alice.kv) }
+        val cloneWallet = Wallet(backup, alice.signer)
+
+        val first = transact(alice, shop, 100, "shop")
+        assertEquals(Outcome.SUCCESS, first.merchant.outcome)
+        assertEquals(1, shop.wallet.pendingReceipts().size)
+
+        // Same token, same merchant, second time.
+        val (a, b) = pipe(); val eph = X25519.generate()
+        var mr: SessionResult? = null; var pr: SessionResult? = null
+        val t1 = Thread {
+            mr = MerchantSession(
+                b, shop.signer, shop.wallet.credential()!!, "shop", 100, shop.wallet.mintPub()!!,
+                shop.wallet.mintKeys(), shop.wallet.revokedIds(), shop.wallet, AutoUi(), eph,
+            ).run()
+        }
+        val t2 = Thread {
+            pr = PayerSession(
+                a, alice.signer, cloneWallet.credential()!!, cloneWallet.mintPub()!!,
+                emptySet(), cloneWallet, AutoUi(),
+            ).run()
+        }
+        t1.start(); t2.start(); t1.join(60000); t2.join(60000)
+
+        assertEquals(mr!!.message, Outcome.REJECTED, mr!!.outcome)
+        assertTrue(mr!!.message, mr!!.message.contains("already spent here"))
+        // The payer is told too, so the tokens are not left locked.
+        assertEquals(pr!!.message, Outcome.REJECTED, pr!!.outcome)
+
+        // Nothing was taken the second time: no extra receipt to settle, and the
+        // merchant's balance of receipts is exactly what the first payment left.
+        assertEquals(1, shop.wallet.pendingReceipts().size)
     }
 
     @Test fun crossMerchantDoubleSpendIsDetectedAndIdentityRevoked() {
@@ -308,8 +404,19 @@ class EndToEndTests {
     }
 
     @Test fun tamperedTokenIsRejectedByMerchant() {
-        val (_, alice, shop) = world()
-        // Alice inflates a 10-token to look like a 100-token.
+        // Funded with 60 -- a 50 and a 10 -- rather than the usual 160, so the
+        // wallet holds no genuine 100-token. `selectExact` sorts by descending
+        // amount and breaks ties by the order of randomly generated token ids, so
+        // with a real 100 also present it would sometimes spend that one instead
+        // and the payment would legitimately succeed.
+        val mint = SimulatedMint(MemoryKV())
+        val alice = Phone("alice", mint).setup(fund = 60)
+        val shop = Phone("shop", mint).setup()
+        assertEquals(listOf(10, 50), alice.wallet.tokens().map { it.token.amount }.sorted())
+
+        // Alice inflates her 10-token to look like a 100-token. It keeps the
+        // 10-denomination key id, so Verify.token rejects it on `key.amount !=
+        // t.amount`, and it is now the only token that can fund a payment of 100.
         val ten = alice.wallet.tokens().first { it.token.amount == 10 }
         val bad = ten.copy(token = ten.token.copy(amount = 100))
         alice.kv.put("token:${ten.token.tokenId}", bad.toJson().toString())
@@ -321,6 +428,148 @@ class EndToEndTests {
         val (mint, alice, _) = world()
         alice.kv.put("mint_pub", "00".repeat(32))
         assertThrows(MintApiException::class.java) { alice.wallet.refreshMintInfo(mint) }
+    }
+
+    // ---- mint-key pinning ------------------------------------------------------------
+    //
+    // A background sync can reach the in-app simulated mint before any backend is
+    // configured. Its key must not become a trust anchor, or the first real mint is
+    // refused and only a full wallet wipe clears it.
+
+    /** A mint that is not the demo one: same behaviour, a different signing key. */
+    private fun realMint(pubHex: String): MintApi {
+        val sim = SimulatedMint(MemoryKV())
+        return object : MintApi by sim {
+            override fun getInfo(): MintInfo = MintInfo(sim.getInfo().keys, pubHex)
+        }
+    }
+
+    @Test fun simulatedMintKeyDoesNotBecomeATrustAnchor() {
+        val (sim, alice, _) = world()
+        alice.wallet.refreshMintInfo(sim)
+        assertEquals(SimulatedMint.DEMO_MINT_PUB_HEX, alice.kv.get("mint_pub"))
+
+        // Configuring a real backend must now succeed, not be refused.
+        val real = realMint("ab".repeat(32))
+        alice.wallet.refreshMintInfo(real)
+        assertEquals("ab".repeat(32), alice.kv.get("mint_pub"))
+    }
+
+    @Test fun firstRealMintKeyIsPinned() {
+        val (_, alice, _) = world()
+        val real = realMint("ab".repeat(32))
+        alice.wallet.refreshMintInfo(real)
+        assertEquals("ab".repeat(32), alice.kv.get("mint_pub"))
+
+        // The same mint again is fine.
+        alice.wallet.refreshMintInfo(real)
+        assertEquals("ab".repeat(32), alice.kv.get("mint_pub"))
+    }
+
+    @Test fun changedRealMintKeyIsStillRejected() {
+        val (_, alice, _) = world()
+        alice.wallet.refreshMintInfo(realMint("ab".repeat(32)))
+        assertThrows(MintApiException::class.java) {
+            alice.wallet.refreshMintInfo(realMint("cd".repeat(32)))
+        }
+        // The pinned key is untouched by the refusal.
+        assertEquals("ab".repeat(32), alice.kv.get("mint_pub"))
+    }
+
+    @Test fun realMintKeyIsNotOverwrittenByTheSimulatedMint() {
+        val (sim, alice, _) = world()
+        alice.wallet.refreshMintInfo(realMint("ab".repeat(32)))
+        assertThrows(MintApiException::class.java) { alice.wallet.refreshMintInfo(sim) }
+        assertEquals("ab".repeat(32), alice.kv.get("mint_pub"))
+    }
+
+    // ---- credential scoping ----------------------------------------------------------
+    //
+    // A credential is signed by the mint that issued it, so it only verifies under that
+    // mint's key. After moving from the demo mint to a real one the wallet must offer to
+    // register again rather than keep a credential the real mint answers with 403.
+
+    /**
+     * A mint with its own Ed25519 key, so its credentials verify under its key and not the
+     * demo mint's. Only the calls `register` and `refreshMintInfo` make are implemented.
+     */
+    private class OtherMint(private val seedByte: Byte) : MintApi {
+        private val signer = SeedSigner(ByteArray(32) { seedByte })
+        val pubHex: String get() = signer.publicKey.hex()
+        override fun getInfo() = MintInfo(DemoMintKeys.keys, pubHex)
+        override fun registerDevice(req: RegisterRequest): DeviceCredential {
+            val credId = sha256(utf8("other|$seedByte|${req.devicePub}")).hex().take(32)
+            val expiry = System.currentTimeMillis() + 86_400_000L
+            val sig = signer.sign(Msg.cred(credId, req.devicePub, req.c0, expiry)).hex()
+            return DeviceCredential(credId, req.devicePub, req.c0, expiry, sig)
+        }
+        override fun latestRoot() = AuditRoot("", 0, System.currentTimeMillis())
+        override fun getRevocations(): List<Revocation> = emptyList()
+        override fun issue(req: IssueRequest): IssueResponse = throw MintApiException("not used")
+        override fun uploadBatch(receipts: List<Receipt>): SettlementResponse =
+            throw MintApiException("not used")
+    }
+
+    @Test fun simulatedCredentialDoesNotCountAsRegisteredOnARealMint() {
+        val (sim, alice, _) = world()
+        alice.wallet.register(sim)
+        assertTrue("registered against the demo mint", alice.wallet.isRegistered())
+
+        // Point at a real backend: its key is adopted over the demo key ...
+        val real = OtherMint(1)
+        alice.wallet.refreshMintInfo(real)
+        assertEquals(real.pubHex, alice.kv.get("mint_pub"))
+
+        // ... and the demo credential no longer counts as registration.
+        assertFalse("demo credential must not satisfy a real mint", alice.wallet.isRegistered())
+        assertNull(alice.wallet.credentialForCurrentMint())
+        // It is not erased -- only a successful registration overwrites it.
+        assertNotNull(alice.wallet.credential())
+    }
+
+    @Test fun mintingRefusesAStaleCredentialRatherThanCallingTheMint() {
+        val (sim, alice, _) = world()
+        alice.wallet.register(sim)
+        val real = OtherMint(1)
+        alice.wallet.refreshMintInfo(real)
+
+        val e = assertThrows(MintApiException::class.java) { alice.wallet.mint(real, 10) }
+        assertTrue(e.message!!, e.message!!.contains("register this device"))
+    }
+
+    @Test fun registrationStateIsCorrectAfterRegisteringWithTheRealMint() {
+        val (sim, alice, _) = world()
+        alice.wallet.register(sim)
+        val demoCredId = alice.wallet.credential()!!.credId
+
+        val real = OtherMint(1)
+        alice.wallet.register(real)
+
+        assertTrue(alice.wallet.isRegistered())
+        assertEquals(real.pubHex, alice.kv.get("mint_pub"))
+        assertNotNull(alice.wallet.credentialForCurrentMint())
+        assertNotEquals("a new credential must replace the demo one", demoCredId, alice.wallet.credential()!!.credId)
+    }
+
+    @Test fun aValidCredentialForTheCurrentMintIsNotDiscarded() {
+        val (sim, alice, _) = world()
+        alice.wallet.register(sim)
+        val credId = alice.wallet.credential()!!.credId
+
+        // Re-reading state, and refreshing against the same mint, must not drop or reissue it.
+        assertTrue(alice.wallet.isRegistered())
+        assertEquals(credId, alice.wallet.credentialForCurrentMint()!!.credId)
+        alice.wallet.refreshMintInfo(sim)
+        assertTrue(alice.wallet.isRegistered())
+        assertEquals(credId, alice.wallet.credential()!!.credId)
+    }
+
+    @Test fun switchingBetweenTwoRealMintsIsStillRejected() {
+        val (_, alice, _) = world()
+        val first = OtherMint(1)
+        alice.wallet.refreshMintInfo(first)
+        assertThrows(MintApiException::class.java) { alice.wallet.refreshMintInfo(OtherMint(2)) }
+        assertEquals("the first real mint stays pinned", first.pubHex, alice.kv.get("mint_pub"))
     }
 
     @Test fun dishonestMintAuditProofIsCaught() {
