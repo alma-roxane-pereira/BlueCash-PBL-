@@ -16,6 +16,15 @@ class SimulatedMint(private val kv: SecureKV, private val clock: () -> Long = { 
     private val signer = SeedSigner(DemoMintKeys.edSeed)
     private val keys = DemoMintKeys.keys
 
+    companion object {
+        /**
+         * The demo mint's public key. It comes from a seed hardcoded in the app, so every
+         * install shares it and nobody chose it. `Wallet.refreshMintInfo` uses this to tell a
+         * demo key apart from a mint the user actually configured.
+         */
+        val DEMO_MINT_PUB_HEX: String by lazy { SeedSigner(DemoMintKeys.edSeed).publicKey.hex() }
+    }
+
     private fun obj(k: String) = kv.get(k)?.let { JSONObject(it) } ?: JSONObject()
     private fun arr(k: String) = kv.get(k)?.let { JSONArray(it) } ?: JSONArray()
 

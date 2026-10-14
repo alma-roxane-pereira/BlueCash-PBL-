@@ -52,7 +52,25 @@ class Wallet(
     }
 
     fun credential(): DeviceCredential? = kv.get("cred")?.let { DeviceCredential.fromJson(JSONObject(it)) }
-    fun isRegistered(): Boolean = credential() != null
+
+    /**
+     * The stored credential, but only when the mint that is configured now issued it and it
+     * has not expired. Credentials are signed by the mint, so a credential the in-app
+     * simulated mint produced does not verify under a real mint's key: after switching to a
+     * real backend the wallet reports itself unregistered and offers to register again,
+     * instead of keeping a "Registered" badge for a credential the real mint answers with
+     * `403 device not registered`.
+     *
+     * Nothing is erased. The old credential stays in storage until a successful
+     * registration overwrites it, and identity, tokens, receipts and history are untouched.
+     */
+    fun credentialForCurrentMint(): DeviceCredential? {
+        val cred = credential() ?: return null
+        val pub = mintPub() ?: return null
+        return if (cred.verify(pub, clock())) cred else null
+    }
+
+    fun isRegistered(): Boolean = credentialForCurrentMint() != null
 
     // ---- cached mint info ---------------------------------------------------------------
 
@@ -64,7 +82,14 @@ class Wallet(
     fun refreshMintInfo(api: MintApi) {
         val info = api.getInfo()
         val pinned = kv.get("mint_pub")
-        if (pinned != null && pinned != info.mintPubHex) throw MintApiException("the mint's signing key changed - refusing (reset the wallet to trust a new mint)")
+        // Trust-on-first-use, but only for a mint the user actually chose. The simulated
+        // mint inside the app signs with a demo seed shipped in the APK, and a background
+        // sync can store that key before any backend is configured -- so treating it as a
+        // trust anchor would lock the wallet out of every real mint, with a full wallet
+        // wipe as the only escape. A demo key is therefore replaceable; a real mint's key
+        // is pinned, and a different one is still refused.
+        if (pinned != null && pinned != SimulatedMint.DEMO_MINT_PUB_HEX && pinned != info.mintPubHex)
+            throw MintApiException("the mint's signing key changed - refusing (reset the wallet to trust a new mint)")
         kv.put("mint_pub", info.mintPubHex)
         kv.put("mint_keys", info.keys.toJsonArray { it.toJson() }.toString())
         mergeRevocations(api.getRevocations())
@@ -114,7 +139,7 @@ class Wallet(
     }
 
     fun mint(api: MintApi, amount: Int, progress: (String) -> Unit = {}): List<Token> {
-        val cred = credential() ?: throw MintApiException("register this device with the mint first")
+        val cred = credentialForCurrentMint() ?: throw MintApiException("register this device with the mint first")
         refreshMintInfo(api)
         val plan = planDenominations(amount, mintKeys())
             ?: throw MintApiException("$amount can't be made from the mint's denominations (${mintKeys().joinToString { it.amount.toString() }})")
