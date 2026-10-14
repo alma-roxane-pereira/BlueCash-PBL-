@@ -244,6 +244,41 @@ def test_double_spend_is_detected_and_recovers_the_identity(scene):
     assert any(r["cred_id"] == payer.credential["cred_id"] for r in second["revoked"])
 
 
+def test_fraud_does_not_credit_the_second_merchant(scene, configured):
+    """A double spend must not pay twice.
+
+    Detection, recovery and revocation are covered above; this covers the money.
+    A credit on the FRAUD path would mint value out of nothing -- the second
+    merchant would be paid from a token already spent -- and every other test in
+    this file would still pass, because none of them looks at B's balance.
+
+    The loss falls on whoever settles second. That is inherent to offline cash,
+    and it is what the revocation above exists to deter.
+    """
+    from sqlalchemy import select
+
+    from app.db.models import Balance, SpentToken
+    from app.db.session import session_scope
+
+    client, payer, token, shop_a, shop_b = scene
+    first = build_receipt(payer, shop_a, token, "ctx-shop-a")
+    second = build_receipt(payer, shop_b, token, "ctx-shop-b")
+
+    assert settle(client, first)["results"][0]["status"] == "ACCEPTED"
+    assert settle(client, second)["results"][0]["status"] == "FRAUD"
+
+    with session_scope() as session:
+        paid = session.get(Balance, (first["merchant_id"], "merchant", "INR"))
+        assert paid is not None and paid.amount == token["amount"], "A keeps its credit"
+
+        unpaid = session.get(Balance, (second["merchant_id"], "merchant", "INR"))
+        assert unpaid is None, "a rejected spend must not even open an account for B"
+
+        rows = session.scalars(select(SpentToken)).all()
+        assert len(rows) == 1
+        assert rows[0].receipt_id == first["receipt_id"], "A's receipt is the stored one"
+
+
 def test_revocation_persists_and_is_listed(scene):
     client, payer, token, shop_a, shop_b = scene
     settle(client, build_receipt(payer, shop_a, token, "ctx-shop-a"))
