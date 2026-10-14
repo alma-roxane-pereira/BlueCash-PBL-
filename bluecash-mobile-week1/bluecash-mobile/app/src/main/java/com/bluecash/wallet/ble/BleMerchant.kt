@@ -146,7 +146,7 @@ class BleMerchant(private val context: Context, private val listener: Listener) 
 
         override fun send(msg: ByteArray) {
             if (closed) throw TransportClosedException()
-            val maxPacket = (mtu - 3).coerceAtLeast(20)
+            val maxPacket = Framing.packetSize(mtu)
             for (packet in Framing.chunk(msg, maxPacket)) {
                 if (!notifyPacket(device, packet)) throw TransportClosedException("could not send over Bluetooth")
                 if (!sent.tryAcquire(BleConstants.IO_TIMEOUT_SEC, TimeUnit.SECONDS)) throw TransportClosedException("Bluetooth send timed out")

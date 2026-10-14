@@ -120,7 +120,7 @@ class BlePayer(private val context: Context) {
 
         override fun send(msg: ByteArray) {
             if (closed) throw TransportClosedException()
-            val maxPacket = (mtu - 3).coerceAtLeast(20)
+            val maxPacket = Framing.packetSize(mtu)
             for (packet in Framing.chunk(msg, maxPacket)) {
                 if (!writePacket(g, rx, packet)) throw TransportClosedException("could not send over Bluetooth")
                 if (!written.tryAcquire(BleConstants.IO_TIMEOUT_SEC, TimeUnit.SECONDS)) throw TransportClosedException("Bluetooth send timed out")

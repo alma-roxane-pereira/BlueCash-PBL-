@@ -9,6 +9,21 @@ object Framing {
     private const val FIRST = 1
     private const val LAST = 2
 
+    /**
+     * GATT refuses any attribute value longer than this, whatever the ATT MTU negotiated to.
+     * Modern phones agree an MTU of 517, and 517 - 3 = 514 is over the limit, so the packet
+     * size has to be clamped as well as derived from the MTU.
+     */
+    const val MAX_ATTRIBUTE_LEN = 512
+
+    /**
+     * Largest packet that may be notified or written on a link whose ATT MTU is [mtu].
+     *
+     * Three bytes go to the ATT header, the rest is ours -- but never more than
+     * [MAX_ATTRIBUTE_LEN], and never less than the 20 bytes the smallest MTU leaves.
+     */
+    fun packetSize(mtu: Int): Int = (mtu - 3).coerceIn(20, MAX_ATTRIBUTE_LEN)
+
     fun chunk(msg: ByteArray, maxPacket: Int): List<ByteArray> {
         require(maxPacket >= 2)
         val payload = maxPacket - 1
