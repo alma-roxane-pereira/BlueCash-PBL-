@@ -35,7 +35,7 @@ since `Wallet.kt` re-uploads any receipt it did not see a result for.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -44,6 +44,7 @@ import bluecash_crypto as bc
 
 from .. import mint_keys, protocol
 from ..codec import CodecError, hex_to_int, int_to_hex
+from ..config import Settings, get_settings
 from ..db.models import Balance, Device, MintIdentity, MintKey, Revocation, SpentToken
 from ..db.session import get_session
 from ..schemas import (
@@ -347,17 +348,31 @@ def _settle_one(
     summary="Settle a batch of receipts",
 )
 def upload_batch(
-    body: UploadBatchRequest, session: Session = Depends(get_session)
+    body: UploadBatchRequest,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> UploadBatchResponse:
     """Settle receipts, detecting double spends.
 
-    Always returns 200: per the contract, an invalid receipt is a per-receipt
-    `INVALID` result, not a batch-level error, so one bad receipt cannot discard
-    the good ones around it.
+    An *invalid receipt* is a per-receipt `INVALID` result inside an HTTP 200,
+    per the contract, so one bad receipt never discards the good ones around it.
+    An *oversized batch* is different: it is a malformed request rather than a
+    protocol failure, and it is refused with 413 before any cryptography runs —
+    otherwise the rejection would cost exactly the work it exists to avoid.
 
     `revoked` carries the **full** revocation list, matching `server.py:209` —
     devices use it to refuse anyone on it.
     """
+    # Checked first, before the key lookup and before any verification.
+    if len(body.receipts) > settings.max_settlement_batch:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"batch of {len(body.receipts)} receipts exceeds the maximum of "
+                f"{settings.max_settlement_batch}; split it into smaller batches"
+            ),
+        )
+
     identity = session.get(MintIdentity, 1)
     mint_pub_hex = identity.public_key_hex if identity else ""
 

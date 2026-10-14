@@ -48,6 +48,7 @@ from ..codec import CodecError, hex_to_int, int_to_hex
 from ..db.models import AuditLeaf, Device, MintIdentity, MintKey, Revocation
 from ..db.session import get_session
 from ..schemas import (
+    AuditProofResponse,
     AuditRootResponse,
     CredentialModel,
     IssueRequest,
@@ -310,4 +311,52 @@ def audit_root_latest(
         root=protocol.merkle_root_hex(leaves),
         tree_size=len(leaves),
         ts=mint_keys.now_ms(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /audit/proof/{leaf_index}
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/audit/proof/{leaf_index}",
+    response_model=AuditProofResponse,
+    summary="Inclusion proof for one audit leaf",
+)
+def audit_proof(
+    leaf_index: int, session: Session = Depends(get_session)
+) -> AuditProofResponse:
+    """Prove that a leaf is in the current audit log.
+
+    `POST /mint/issue` already returns a proof, but only to the device that made
+    the issuance, and only once. This serves the same proof afterwards, to
+    anyone, so a published root can actually be checked rather than taken on
+    trust.
+
+    Leaf indices are zero-based and dense, matching `_append_audit_leaf`.
+
+    The root, tree size and proof all come from one read of the log, so they are
+    consistent with each other even if an issuance commits while this runs: the
+    caller verifies against the root returned here, not the one from a separate
+    request to `/audit/root/latest`.
+
+    Not in `API_CONTRACT.md` -- see the divergence note in README.md. It is
+    additive and read-only, so no existing client is affected.
+    """
+    leaves = _all_leaves(session)
+    if leaf_index < 0 or leaf_index >= len(leaves):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no audit leaf {leaf_index}; the log holds {len(leaves)} "
+                f"leaf/leaves, indexed from 0"
+            ),
+        )
+    return AuditProofResponse(
+        leaf_index=leaf_index,
+        leaf=leaves[leaf_index],
+        tree_size=len(leaves),
+        proof=protocol.merkle_proof_hex(leaves, leaf_index),
+        root=protocol.merkle_root_hex(leaves),
     )

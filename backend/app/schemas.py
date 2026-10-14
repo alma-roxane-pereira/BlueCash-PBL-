@@ -109,6 +109,33 @@ class AuditRootResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# GET /audit/proof/{leaf_index}
+# ---------------------------------------------------------------------------
+
+
+class AuditProofResponse(BaseModel):
+    """An inclusion proof for one leaf, against the root reported alongside it.
+
+    The same five fields `POST /mint/issue` returns, plus `leaf`, because a
+    caller who did not make the issuance has no other way to learn the leaf it
+    is verifying. Everything needed for
+    `merkle_verify_inclusion(leaf, leaf_index, tree_size, proof, root)` is here
+    and comes from one snapshot of the log, so the proof always matches the root
+    it is served with.
+
+    Nothing identifying is included. The stored `cred_id` would say which device
+    was issued the token and `key_id` would say for how much; neither is needed
+    to verify inclusion, so neither is returned.
+    """
+
+    leaf_index: int
+    leaf: str = Field(description="Leaf data hex: SHA256(blinded || blind_sig)")
+    tree_size: int
+    proof: list[str]
+    root: str
+
+
+# ---------------------------------------------------------------------------
 # POST /settlement/uploadBatch
 # ---------------------------------------------------------------------------
 
@@ -137,7 +164,17 @@ class ReceiptModel(_Strict):
     amount: int
     payer_cred: CredentialModel
     payer_sig: str
-    merchant_id: str
+    # Bounded to match `spent_tokens.merchant_id`, which is String(64).
+    #
+    # This is a free-text shop name the merchant types in (`ReceiveScreen.kt`,
+    # defaulting to "shop-" + 6 hex characters), not an identifier the protocol
+    # derives, and the UI imposes no limit. SQLite silently stores an
+    # over-length value; PostgreSQL would raise StringDataRightTruncation and
+    # turn it into a 500. Rejecting it here keeps that a client error.
+    #
+    # Neither `API_CONTRACT.md` nor the reference server constrains this -- see
+    # the divergence note in README.md.
+    merchant_id: str = Field(min_length=1, max_length=64)
     merchant_cred: CredentialModel
     merchant_sig: str
     timestamp_ms: int

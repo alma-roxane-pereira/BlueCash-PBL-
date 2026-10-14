@@ -60,6 +60,23 @@ class Settings(BaseSettings):
     # noisy otherwise.
     database_echo: bool = False
 
+    # --- settlement limits -------------------------------------------------
+    # Largest batch `/settlement/uploadBatch` will accept.
+    #
+    # Verifying one receipt costs roughly five 2048-bit modular exponentiations
+    # plus three Ed25519 verifications -- measured at ~6ms here, so 500 receipts
+    # is a few seconds of CPU and 5,000 would tie up a worker for half a minute.
+    # Neither `API_CONTRACT.md` nor the reference server bounds this, so an
+    # unbounded batch is the cheapest denial of service against the mint.
+    #
+    # 500 is far above anything a real client produces: the wallet syncs
+    # periodically via WorkManager, and a merchant would have to accumulate 500
+    # offline sales between syncs to approach it. The headroom matters, because
+    # `HttpMintApi.kt:30` turns any non-2xx into an exception and `Wallet.kt`
+    # only clears receipts it got a result for -- so a client that genuinely
+    # exceeded the limit would retry forever rather than splitting the batch.
+    max_settlement_batch: int = Field(default=500, ge=1)
+
     # --- integrity ---------------------------------------------------------
     # Play Integrity verification needs Google's API (network + credentials),
     # so the token is accepted and stored but not verified unless this is on.
