@@ -24,7 +24,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .api import health, mint, settlement
+from .api import health, mint, settlement, status
 from .config import Settings, get_settings
 
 DESCRIPTION = """\
@@ -85,10 +85,16 @@ def create_app(settings: Settings | None = None, *, bootstrap_keys: bool = True)
         # exposes no secrets through them either way.
         docs_url="/docs" if not settings.is_production else None,
         redoc_url=None,
+        # The schema itself is withheld in production too. Leaving
+        # `/openapi.json` served while hiding `/docs` only hides the browser:
+        # the schema is the part that enumerates every route and field, and
+        # any viewer renders it.
+        openapi_url=None if settings.is_production else "/openapi.json",
     )
 
     app.state.settings = settings
     app.state.bootstrap_keys = bootstrap_keys
+    app.include_router(status.router)
     app.include_router(health.router)
     app.include_router(mint.router)
     app.include_router(settlement.router)

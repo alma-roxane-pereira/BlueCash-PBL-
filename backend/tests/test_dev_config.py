@@ -106,3 +106,43 @@ def test_dev_server_does_not_hardcode_an_address(name):
         if not ip.startswith(("0.0.0.0", "127.", "169.254."))
     ]
     assert not unexpected, f"{name} hardcodes {unexpected}"
+
+
+# ---------------------------------------------------------------------------
+# the deployment URL
+# ---------------------------------------------------------------------------
+
+
+def test_a_bare_postgres_url_is_pinned_to_psycopg3(monkeypatch):
+    """Managed hosts hand out `postgresql://`, which SQLAlchemy maps to psycopg2.
+
+    psycopg2 is not in `requirements.txt`, so without this rewrite the mint
+    would import-error at startup -- after the deploy reported success.
+    """
+    monkeypatch.setenv("BLUECASH_DATABASE_URL", "postgresql://u:p@host:5432/bluecash")
+    assert Settings().database_url == "postgresql+psycopg://u:p@host:5432/bluecash"
+
+
+def test_the_legacy_postgres_scheme_is_handled_too(monkeypatch):
+    """Some providers still emit the older `postgres://` spelling."""
+    monkeypatch.setenv("BLUECASH_DATABASE_URL", "postgres://u:p@host/bluecash")
+    assert Settings().database_url.startswith("postgresql+psycopg://")
+
+
+def test_an_explicit_driver_is_left_alone(monkeypatch):
+    url = "postgresql+psycopg://u:p@host/bluecash"
+    monkeypatch.setenv("BLUECASH_DATABASE_URL", url)
+    assert Settings().database_url == url
+
+
+def test_sqlite_urls_are_untouched(monkeypatch):
+    """Local development must not be affected by a deployment concern."""
+    monkeypatch.setenv("BLUECASH_DATABASE_URL", "sqlite:///C:/tmp/ble-mint.db")
+    assert Settings().database_url == "sqlite:///C:/tmp/ble-mint.db"
+
+
+def test_credentials_survive_the_rewrite(monkeypatch):
+    """A mangled password would fail to connect for a reason nobody could see."""
+    monkeypatch.setenv("BLUECASH_DATABASE_URL", "postgresql://user:p%40ss:word@h:5432/db?sslmode=require")
+    rewritten = Settings().database_url
+    assert rewritten.endswith("user:p%40ss:word@h:5432/db?sslmode=require")

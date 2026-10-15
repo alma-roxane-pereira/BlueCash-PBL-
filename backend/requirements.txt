@@ -30,4 +30,11 @@ cryptography==50.0.2
 httpx==0.28.1
 anyio==4.7.0
 
+# PostgreSQL driver, for deployment. SQLite stays the default for local work,
+# so this is unused on a laptop -- but the mint's identity lives in the
+# database, and a hosted mint on an ephemeral filesystem would mint a new
+# identity on every redeploy and orphan every wallet that had registered.
+# The [binary] extra ships prebuilt wheels, so no compiler is needed.
+psycopg[binary]==3.2.3
+
 pytest==8.4.2
