@@ -1,0 +1,33 @@
+# Backend dependencies, pinned to the versions this code was developed and
+# tested against.
+#
+# Pinned rather than ranged on purpose: the mint signs tokens, and a dependency
+# that resolves differently on another machine is a dependency that was never
+# tested with this protocol. Upgrade deliberately, then re-run the suite.
+#
+#   python -m venv .venv
+#   .venv/Scripts/pip install -r backend/requirements.txt
+#
+# `bluecash_crypto` is not listed: it is this repository's Rust core, built with
+# maturin from `crates/bluecash-crypto`. See that directory's pyproject.toml.
+
+fastapi==0.120.4
+starlette==0.47.2
+uvicorn==0.38.0
+pydantic==2.12.5
+pydantic-settings==2.12.0
+
+SQLAlchemy==2.0.40
+alembic==1.17.2
+# SQLAlchemy 2.0 needs it on CPython for its async and connection pooling paths.
+greenlet==3.1.1
+
+# RSA denomination keys: generated and parsed here, verified in the Rust core.
+cryptography==50.0.2
+
+# Used by the application, not only the tests: the TestClient transport and the
+# async primitives FastAPI runs on.
+httpx==0.28.1
+anyio==4.7.0
+
+pytest==8.4.2
