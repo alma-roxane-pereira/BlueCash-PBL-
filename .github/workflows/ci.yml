@@ -1,0 +1,140 @@
+# Continuous integration for the BlueCash Protocol.
+#
+# The protocol is implemented three times -- Rust, Python and Kotlin -- and the
+# whole design rests on those three agreeing byte for byte. A change that passes
+# one suite and breaks another is the failure mode this exists to catch, so all
+# three run on every push, and none of them is allowed to be skipped quietly.
+#
+# Each job runs the same commands used during development, so a green run here
+# means the same thing as a green run on a laptop.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push makes an in-flight run on the same ref irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail on warnings here rather than letting them accumulate unread.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  rust:
+    name: Rust core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/bluecash-crypto
+
+      - name: Check formatting
+        working-directory: crates/bluecash-crypto
+        run: cargo fmt --check
+
+      - name: Lint
+        working-directory: crates/bluecash-crypto
+        run: cargo clippy --all-targets
+
+      # Includes the RFC 5869, RFC 6962 and RFC 7748 vectors, and the reference
+      # vectors generated from the Python server.
+      - name: Test
+        working-directory: crates/bluecash-crypto
+        run: cargo test
+
+      - name: Build with the PyO3 bindings enabled
+        working-directory: crates/bluecash-crypto
+        run: cargo build --features python
+
+  backend:
+    name: Backend and Python bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/bluecash-crypto
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install maturin==1.15.0
+
+      # The backend imports the Rust core, so it has to be built and installed
+      # before anything can be collected. `offline = true` in that pyproject.toml
+      # is a local-development default; CI resolves normally.
+      - name: Build and install the Rust core
+        working-directory: crates/bluecash-crypto
+        run: maturin build --release --features python --out dist && pip install dist/*.whl
+
+      - name: Test the Python bindings
+        working-directory: crates/bluecash-crypto
+        run: python -m pytest tests -q
+
+      - name: Test the backend
+        working-directory: backend
+        run: python -m pytest
+
+      # Slow -- it starts two servers and compares them -- so it is deselected
+      # from the default run and asked for explicitly here.
+      - name: Differential suite against the reference server
+        working-directory: backend
+        run: python -m pytest tests/differential -m differential
+
+  android:
+    name: Android client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # These cover the protocol logic: the RSA blind signatures, the Merkle
+      # proofs, the double-spend recovery, and the session vectors shared with
+      # the Rust core. No device or emulator is needed.
+      - name: Unit tests
+        working-directory: bluecash-mobile-week1/bluecash-mobile
+        run: ./gradlew :app:testDebugUnitTest
+
+      - name: Assemble the debug APK
+        working-directory: bluecash-mobile-week1/bluecash-mobile
+        run: ./gradlew :app:assembleDebug
+
+      - name: Upload the test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-report
+          path: bluecash-mobile-week1/bluecash-mobile/app/build/reports/tests/
+          if-no-files-found: ignore
