@@ -1,0 +1,24 @@
+# Build output and caches: copying these would bloat the context and, worse,
+# could overwrite the image's freshly built artefacts with the host's.
+**/target/
+**/build/
+**/.gradle/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+.venv/
+**/node_modules/
+
+# Never ship a database. The mint's identity lives in one, and an image
+# carrying a developer's SQLite file would serve the wrong mint entirely.
+**/*.db
+**/*.sqlite3
+.env
+**/local.properties
+
+# Not needed to run the mint.
+.git/
+.github/
+bluecash-mobile-week1/
+*.docx
+**/*.apk
