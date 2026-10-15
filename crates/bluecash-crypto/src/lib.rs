@@ -16,13 +16,14 @@
 //! # Scope
 //!
 //! Implemented and tested: the full-domain hash, the RFC 6962 Merkle tree, RSA
-//! blind signatures, Ed25519, and the Feldman-committed share scheme used for
-//! double-spend detection.
+//! blind signatures, Ed25519, the Feldman-committed share scheme used for
+//! double-spend detection, and the X25519/HKDF/AES-GCM session setup for the
+//! BLE channel.
 //!
-//! Not implemented: X25519/HKDF/AES-GCM session setup (client-side only so far),
-//! the FFI layers (PyO3, UniFFI), and **BBS+ anonymous credentials**. BBS+ is
-//! named as a closed gap in the proposal but exists in neither this crate nor
-//! the Android client; it must not be described as supported.
+//! Not implemented: the UniFFI layer (PyO3 is present behind the `python`
+//! feature), and **BBS+ anonymous credentials**. BBS+ is named as a closed gap
+//! in the proposal but exists in neither this crate nor the Android client; it
+//! must not be described as supported.
 
 #![forbid(unsafe_code)]
 
@@ -31,6 +32,7 @@ pub mod ed25519;
 pub mod fdh;
 pub mod merkle;
 pub mod rng;
+pub mod session;
 pub mod shares;
 
 #[cfg(feature = "python")]
@@ -40,6 +42,10 @@ pub use blind::{sign_blinded, unblind, BlindError, Blinded};
 pub use ed25519::{Ed25519Error, Keypair};
 pub use fdh::fdh;
 pub use merkle::{leaf_hash, node_hash, proof, root, verify_inclusion, MerkleError};
+pub use session::{
+    auth_message, derive_session_keys, hkdf_sha256, x25519_agree, x25519_public,
+    EphemeralKeypair, SecureChannel, SessionError, SessionKeys,
+};
 pub use shares::{jacobi, Group};
 
 use sha2::{Digest, Sha256};
