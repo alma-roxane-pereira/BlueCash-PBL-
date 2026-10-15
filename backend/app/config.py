@@ -15,7 +15,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import __version__
@@ -55,6 +55,24 @@ class Settings(BaseSettings):
     # long I/O waits, so async buys little here. The schema is written to stay
     # PostgreSQL-compatible, so moving later is a URL change plus a driver.
     database_url: str = "sqlite:///./bluecash.db"
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_psycopg3(cls, url: str) -> str:
+        """Pin the PostgreSQL driver this project actually installs.
+
+        Managed hosts hand out a bare `postgresql://` URL. SQLAlchemy maps that
+        to psycopg2, which is not in `requirements.txt`, so the mint would fail
+        at startup with `ModuleNotFoundError: psycopg2` -- after the deploy had
+        been reported as successful, and with nothing in the URL to suggest why.
+
+        Rewriting it here rather than asking every deployment to remember the
+        `+psycopg` suffix keeps the failure from being possible at all.
+        """
+        for prefix in ("postgresql://", "postgres://"):
+            if url.startswith(prefix):
+                return "postgresql+psycopg://" + url[len(prefix):]
+        return url
 
     # Echo every SQL statement. Useful when debugging a migration; far too
     # noisy otherwise.
