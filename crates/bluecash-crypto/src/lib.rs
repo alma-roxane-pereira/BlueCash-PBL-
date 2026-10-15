@@ -38,6 +38,13 @@ pub mod shares;
 #[cfg(feature = "python")]
 mod ffi_py;
 
+#[cfg(feature = "uniffi-bindings")]
+pub mod ffi_uniffi;
+
+// Generates the FFI scaffolding the Kotlin and Swift bindings bind to.
+#[cfg(feature = "uniffi-bindings")]
+uniffi::setup_scaffolding!("bluecash_crypto");
+
 pub use blind::{sign_blinded, unblind, BlindError, Blinded};
 pub use ed25519::{Ed25519Error, Keypair};
 pub use fdh::fdh;
