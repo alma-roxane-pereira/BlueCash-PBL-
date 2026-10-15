@@ -38,7 +38,12 @@ fun BlueCashNavHost() {
             startDestination = Destination.WalletHome.route,
             modifier = Modifier.padding(innerPadding)
         ) {
-            composable(Destination.WalletHome.route) { WalletHomeScreen() }
+            composable(Destination.WalletHome.route) {
+                // The wallet's Pay and Receive buttons go to the same places the
+                // bottom bar does, with the same options, so the two cannot drift
+                // into behaving differently.
+                WalletHomeScreen(onNavigate = { route -> navController.navigateTab(route) })
+            }
             composable(Destination.Pay.route) { PayScreen() }
             composable(Destination.Receive.route) { ReceiveScreen() }
             composable(Destination.Settings.route) { SettingsScreen() }
@@ -55,19 +60,20 @@ private fun BlueCashBottomBar(navController: NavHostController) {
         Destination.bottomBarDestinations.forEach { destination ->
             NavigationBarItem(
                 selected = currentRoute == destination.route,
-                onClick = {
-                    navController.navigate(destination.route) {
-                        popUpTo(navController.graph.findStartDestination().id) {
-                            saveState = true
-                        }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                },
+                onClick = { navController.navigateTab(destination.route) },
                 icon = { Icon(iconFor(destination), contentDescription = destination.label) },
                 label = { Text(destination.label) }
             )
         }
+    }
+}
+
+/** Switch top-level tab, preserving each tab's own back stack and state. */
+private fun NavHostController.navigateTab(route: String) {
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
     }
 }
 

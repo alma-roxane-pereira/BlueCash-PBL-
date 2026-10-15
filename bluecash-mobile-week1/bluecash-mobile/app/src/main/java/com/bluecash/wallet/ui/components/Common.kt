@@ -50,7 +50,7 @@ fun SectionCard(title: String, content: @Composable ColumnScope.() -> Unit) {
 }
 /** The balance gets its own treatment: this is the number the screen exists for. */
 @Composable
-fun BalanceCard(content: @Composable ColumnScope.() -> Unit) {
+fun BalanceCard(label: String = "Balance", content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -59,7 +59,7 @@ fun BalanceCard(content: @Composable ColumnScope.() -> Unit) {
         ),
     ) {
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Balance", style = MaterialTheme.typography.labelLarge)
+            Text(label, style = MaterialTheme.typography.labelLarge)
             content()
         }
     }
