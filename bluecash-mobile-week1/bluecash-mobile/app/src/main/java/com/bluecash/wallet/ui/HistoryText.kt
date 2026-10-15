@@ -24,8 +24,23 @@ import java.util.Date
  */
 object HistoryText {
 
-    /** A formatted row: a headline, the detail under it, and a leading glyph. */
-    data class Row(val icon: String, val title: String, val detail: String, val time: String)
+    /**
+     * A formatted row.
+     *
+     * [amount] is kept out of [title] so the list can right-align it in its own
+     * column -- that is what lets someone scan a history for "how much" without
+     * reading every line. [credit] is true for money in, false for money out,
+     * and null for entries that move nothing (registration, sync), which is how
+     * the row decides whether to tint the figure.
+     */
+    data class Row(
+        val icon: String,
+        val title: String,
+        val detail: String,
+        val time: String,
+        val amount: String = "",
+        val credit: Boolean? = null,
+    )
 
     private val timeFormat: DateFormat =
         DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
@@ -36,20 +51,38 @@ object HistoryText {
 
         return when (entry.type) {
             "MINT" -> {
-                val amount = json.rupees("amount")
                 val tokens = json?.optInt("tokens", 0) ?: 0
-                Row("＋", "Added $amount", plural(tokens, "token", "tokens"), time)
+                Row(
+                    icon = "＋",
+                    title = "Added money",
+                    detail = plural(tokens, "token", "tokens"),
+                    time = time,
+                    amount = json.signed("amount", credit = true),
+                    credit = true,
+                )
             }
 
             "PAY_SENT" -> {
-                val amount = json.rupees("amount")
                 val merchant = json?.optString("merchant_id").orBlank()
-                Row("→", "Paid $amount", if (merchant.isEmpty()) "" else "to ${shorten(merchant)}", time)
+                Row(
+                    icon = "↗",
+                    title = if (merchant.isEmpty()) "Paid" else "Paid · ${shorten(merchant)}",
+                    detail = "",
+                    time = time,
+                    amount = json.signed("amount", credit = false),
+                    credit = false,
+                )
             }
 
             "PAY_RECEIVED" -> {
-                val amount = json.rupees("amount")
-                Row("←", "Received $amount", "", time)
+                Row(
+                    icon = "↙",
+                    title = "Money received",
+                    detail = "",
+                    time = time,
+                    amount = json.signed("amount", credit = true),
+                    credit = true,
+                )
             }
 
             "SETTLE" -> {
@@ -69,13 +102,20 @@ object HistoryText {
 
             "REGISTER" -> {
                 val credId = json?.optString("cred_id").orBlank()
-                Row("✓", "This device was registered", if (credId.isEmpty()) "" else "ID ${shorten(credId)}", time)
+                Row("✓", "Device registered", if (credId.isEmpty()) "" else "ID ${shorten(credId)}", time)
             }
 
             // A type this build does not know about: show it plainly rather than
             // hiding the row, since the ledger is meant to be complete.
             else -> Row("•", entry.type.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }, "", time)
         }
+    }
+
+    /** `+ ₹50` or `- ₹10`; empty when the payload carries no usable amount. */
+    private fun JSONObject?.signed(key: String, credit: Boolean): String {
+        val value = this?.opt(key)
+        val amount = (value as? Number)?.toInt() ?: return ""
+        return (if (credit) "+ " else "- ") + "₹" + amount
     }
 
     /** `₹10`, or an empty string when the payload has no usable amount. */

@@ -18,8 +18,11 @@ class HistoryTextTest {
 
     @Test fun mintReadsAsMoneyAdded() {
         val row = format("MINT", """{"amount":160,"tokens":3}""")
-        assertEquals("Added ₹160", row.title)
+        assertEquals("Added money", row.title)
         assertEquals("3 tokens", row.detail)
+        // The amount lives in its own field so the list can right-align it.
+        assertEquals("+ ₹160", row.amount)
+        assertEquals(true, row.credit)
     }
 
     @Test fun aSingleTokenIsNotPluralised() {
@@ -28,18 +31,30 @@ class HistoryTextTest {
 
     @Test fun paymentSentNamesTheMerchant() {
         val row = format("PAY_SENT", """{"amount":10,"merchant_id":"shop-93d356","receipts":["21c0b7d1-5da4-4ab0"]}""")
-        assertEquals("Paid ₹10", row.title)
-        assertEquals("to shop-93d356", row.detail)
+        assertEquals("Paid · shop-93d356", row.title)
+        assertEquals("- ₹10", row.amount)
+        assertEquals(false, row.credit)
     }
 
     @Test fun paymentReceivedReadsAsIncoming() {
         val row = format("PAY_RECEIVED", """{"amount":10,"receipts":["21c0b7d1-5da4-4ab0-8c7d-c6ef8b976345"]}""")
-        assertEquals("Received ₹10", row.title)
+        assertEquals("Money received", row.title)
+        assertEquals("+ ₹10", row.amount)
+        assertEquals(true, row.credit)
+    }
+
+    @Test fun moneyInAndMoneyOutAreDistinguishable() {
+        // The one thing the colour and the sign both depend on.
+        assertEquals(true, format("PAY_RECEIVED", """{"amount":10}""").credit)
+        assertEquals(false, format("PAY_SENT", """{"amount":10}""").credit)
+        // A sync moves nothing, so it must not be tinted either way.
+        assertNull(format("SETTLE", """{"uploaded":1,"accepted":1,"alerts":0}""").credit)
+        assertEquals("", format("SETTLE", """{"uploaded":1,"accepted":1,"alerts":0}""").amount)
     }
 
     @Test fun aLongIdentifierIsShortenedNotWrapped() {
         val row = format("REGISTER", """{"cred_id":"d738253914a34ab4ae2922ee737f92a7"}""")
-        assertEquals("This device was registered", row.title)
+        assertEquals("Device registered", row.title)
         assertTrue("should be elided: ${row.detail}", row.detail.endsWith("…"))
         assertTrue(row.detail.length < 20)
     }
@@ -72,7 +87,7 @@ class HistoryTextTest {
         )
         for ((type, payload) in payloads) {
             val row = format(type, payload)
-            val shown = row.title + row.detail
+            val shown = row.title + row.detail + row.amount
             assertFalse("$type leaks JSON: $shown", shown.contains("{"))
             assertFalse("$type leaks JSON: $shown", shown.contains("\""))
             assertFalse("$type leaks a key name: $shown", shown.contains("_id\":"))
@@ -83,7 +98,8 @@ class HistoryTextTest {
         // A row that cannot be parsed must still render; the ledger is meant to
         // be complete, and a crash here would take the whole screen down.
         val row = format("MINT", "not json at all")
-        assertEquals("Added ", row.title.take(6))
+        assertEquals("Added money", row.title)
+        assertEquals("", row.amount)
     }
 
     @Test fun anUnknownTypeIsShownPlainly() {
