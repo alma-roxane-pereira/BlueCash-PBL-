@@ -331,6 +331,45 @@ pub fn nonce(counter: u64) -> [u8; NONCE_LEN] {
     n
 }
 
+/// Encrypts one record at an explicit counter.
+///
+/// The stateless form of [`SecureChannel::seal`], for callers that track the
+/// counter themselves -- the Python bindings, and tests that need to produce a
+/// record at a chosen position. Reusing a counter under one key is fatal to
+/// GCM, so a caller that uses this owns that invariant.
+pub fn seal_at(key: &[u8; KEY_LEN], counter: u64, plain: &[u8]) -> Vec<u8> {
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    cipher
+        .encrypt(
+            Nonce::from_slice(&nonce(counter)),
+            Payload {
+                msg: plain,
+                aad: AAD,
+            },
+        )
+        .expect("AES-GCM encryption of a BLE-sized record cannot fail")
+}
+
+/// Decrypts one record at an explicit counter.
+///
+/// The stateless form of [`SecureChannel::open`].
+pub fn open_at(
+    key: &[u8; KEY_LEN],
+    counter: u64,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, SessionError> {
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    cipher
+        .decrypt(
+            Nonce::from_slice(&nonce(counter)),
+            Payload {
+                msg: ciphertext,
+                aad: AAD,
+            },
+        )
+        .map_err(|_| SessionError::DecryptionFailed)
+}
+
 /// AES-256-GCM over the BLE link, with an implicit message counter as the nonce.
 ///
 /// Because the counter is never transmitted, a replayed, dropped, reordered or
@@ -365,18 +404,7 @@ impl SecureChannel {
 
     /// Encrypts the next outbound record and advances the send counter.
     pub fn seal(&mut self, plain: &[u8]) -> Vec<u8> {
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.send_key));
-        let out = cipher
-            .encrypt(
-                Nonce::from_slice(&nonce(self.send_ctr)),
-                Payload {
-                    msg: plain,
-                    aad: AAD,
-                },
-            )
-            // GCM encryption fails only for a plaintext beyond roughly 64 GiB,
-            // which a 512-byte BLE attribute cannot reach.
-            .expect("AES-GCM encryption of a BLE-sized record cannot fail");
+        let out = seal_at(&self.send_key, self.send_ctr, plain);
         self.send_ctr += 1;
         out
     }
@@ -384,16 +412,7 @@ impl SecureChannel {
     /// Decrypts the next inbound record, advancing the receive counter only on
     /// success — so a rejected record leaves the channel exactly where it was.
     pub fn open(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, SessionError> {
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.recv_key));
-        let out = cipher
-            .decrypt(
-                Nonce::from_slice(&nonce(self.recv_ctr)),
-                Payload {
-                    msg: ciphertext,
-                    aad: AAD,
-                },
-            )
-            .map_err(|_| SessionError::DecryptionFailed)?;
+        let out = open_at(&self.recv_key, self.recv_ctr, ciphertext)?;
         self.recv_ctr += 1;
         Ok(out)
     }

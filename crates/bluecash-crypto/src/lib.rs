@@ -43,8 +43,8 @@ pub use ed25519::{Ed25519Error, Keypair};
 pub use fdh::fdh;
 pub use merkle::{leaf_hash, node_hash, proof, root, verify_inclusion, MerkleError};
 pub use session::{
-    auth_message, derive_session_keys, hkdf_sha256, x25519_agree, x25519_public, EphemeralKeypair,
-    SecureChannel, SessionError, SessionKeys,
+    auth_message, derive_session_keys, hkdf_sha256, open_at, seal_at, x25519_agree, x25519_public,
+    EphemeralKeypair, SecureChannel, SessionError, SessionKeys,
 };
 pub use shares::{jacobi, Group};
 
