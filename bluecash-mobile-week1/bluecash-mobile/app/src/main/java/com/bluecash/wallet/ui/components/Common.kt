@@ -25,6 +25,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bluecash.wallet.core.Outcome
 import com.bluecash.wallet.core.SessionResult
+import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.graphics.Brush
+import com.bluecash.wallet.ui.theme.ErrorDark
+import com.bluecash.wallet.ui.theme.ErrorLight
+import com.bluecash.wallet.ui.theme.GradientEnd
+import com.bluecash.wallet.ui.theme.GradientStart
+import com.bluecash.wallet.ui.theme.InkDark
+import com.bluecash.wallet.ui.theme.InkLight
+import com.bluecash.wallet.ui.theme.NeutralDark
+import com.bluecash.wallet.ui.theme.NeutralLight
+import com.bluecash.wallet.ui.theme.SuccessDark
+import com.bluecash.wallet.ui.theme.SuccessLight
+import com.bluecash.wallet.ui.theme.WarningDark
+import com.bluecash.wallet.ui.theme.WarningLight
 
 /** A scrolling page with consistent padding and spacing. */
 @Composable
@@ -37,6 +52,59 @@ fun ScreenColumn(content: @Composable ColumnScope.() -> Unit) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
         content = content,
     )
+}
+
+
+/**
+ * The balance, as the thing the screen is about.
+ *
+ * It was a plain card of text, visually equal to "Bluetooth permissions" below
+ * it. A wallet's first job is to answer "how much do I have", so this is the
+ * one element given the brand gradient and the largest type on the page.
+ */
+@Composable
+fun BalanceCard(balance: Int, tokens: Int, pending: Int) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column(
+            Modifier
+                .background(Brush.linearGradient(listOf(GradientStart, GradientEnd)))
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "YOUR BALANCE",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White.copy(alpha = 0.75f),
+            )
+            Text(
+                "₹$balance",
+                fontSize = 40.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+            )
+            Text(
+                if (tokens == 1) "1 token" else "$tokens tokens",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.8f),
+            )
+            if (pending > 0) {
+                // Money that has left the wallet but is not yet confirmed by the
+                // mint. Saying so plainly beats a balance that silently disagrees
+                // with what the person just did.
+                Text(
+                    "₹$pending awaiting confirmation",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.9f),
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -70,16 +138,18 @@ fun SasCard(sas: String, onAnswer: (Boolean) -> Unit) {
 
 @Composable
 fun ResultCard(result: SessionResult, onDone: () -> Unit) {
+    val dark = isSystemInDarkTheme()
     val (title, color) = when (result.outcome) {
-        Outcome.SUCCESS -> "Done" to Color(0xFFDFF3E3)
-        Outcome.UNCERTAIN -> "Check this payment" to Color(0xFFFFF1CC)
-        Outcome.DECLINED -> "Cancelled" to Color(0xFFEDEDED)
-        else -> "Didn't go through" to Color(0xFFFBE1DE)
+        Outcome.SUCCESS -> "Done" to if (dark) SuccessDark else SuccessLight
+        Outcome.UNCERTAIN -> "Check this payment" to if (dark) WarningDark else WarningLight
+        Outcome.DECLINED -> "Cancelled" to if (dark) NeutralDark else NeutralLight
+        else -> "Didn't go through" to if (dark) ErrorDark else ErrorLight
     }
+    val ink = if (dark) InkLight else InkDark
     Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = color)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = Color.Black)
-            Text(result.message, style = MaterialTheme.typography.bodyMedium, color = Color.Black)
+            Text(title, style = MaterialTheme.typography.titleMedium, color = ink)
+            Text(result.message, style = MaterialTheme.typography.bodyMedium, color = ink)
             Button(onClick = onDone) { Text("OK") }
         }
     }
