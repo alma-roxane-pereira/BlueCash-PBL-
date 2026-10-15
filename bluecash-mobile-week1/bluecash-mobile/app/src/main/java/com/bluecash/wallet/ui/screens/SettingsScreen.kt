@@ -30,6 +30,7 @@ import com.bluecash.wallet.crypto.ProtocolIdentity
 import com.bluecash.wallet.ui.components.ScreenColumn
 import com.bluecash.wallet.ui.components.SectionCard
 import kotlin.concurrent.thread
+import com.bluecash.wallet.ui.FriendlyError
 
 @Composable
 fun SettingsScreen() {
@@ -85,7 +86,7 @@ fun SettingsScreen() {
                         AppContainer.wallet.register(AppContainer.mintApi(), token)
                         "Registered ✓"
                     } catch (e: Exception) {
-                        "Failed: ${e.message}"
+                        FriendlyError.of(e.message)
                     }
                     busy = false
                     AppContainer.refreshState()
@@ -132,7 +133,7 @@ fun SettingsScreen() {
                         val r = AppContainer.wallet.sync(AppContainer.mintApi())
                         "Uploaded ${r.uploaded}, settled ${r.accepted}, alerts ${r.alerts.size}"
                     } catch (e: Exception) {
-                        "Sync failed: ${e.message}"
+                        "Sync failed. " + FriendlyError.of(e.message)
                     }
                     busy = false
                     AppContainer.refreshState()
