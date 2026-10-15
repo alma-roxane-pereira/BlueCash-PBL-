@@ -25,7 +25,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyDict};
 
 use num_bigint::BigUint;
 
@@ -36,6 +36,7 @@ use crate::ed25519 as ed25519_mod;
 use crate::fdh as fdh_mod;
 use crate::merkle as merkle_mod;
 use crate::rng as rng_mod;
+use crate::session as session_mod;
 use crate::shares as shares_mod;
 
 // ---------------------------------------------------------------------------
@@ -297,6 +298,137 @@ fn merkle_verify_inclusion(
 }
 
 // ---------------------------------------------------------------------------
+// BLE session setup
+// ---------------------------------------------------------------------------
+//
+// Exposed so the mint and its tests can derive a session the same way a phone
+// does. The handshake itself runs between two devices, not against the mint, so
+// nothing here is on a request path -- its value is that the Python side can
+// now check the Android client rather than trust it.
+
+/// hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int) -> bytes
+///
+/// RFC 5869 extract-then-expand. An empty `salt` means 32 zero bytes, as the
+/// RFC specifies and the Kotlin client implements.
+#[pyfunction]
+fn hkdf_sha256(
+    py: Python<'_>,
+    ikm: &[u8],
+    salt: &[u8],
+    info: &[u8],
+    length: usize,
+) -> PyResult<Py<PyBytes>> {
+    let out = session_mod::hkdf_sha256(ikm, salt, info, length).map_err(value_err)?;
+    Ok(PyBytes::new(py, &out).unbind())
+}
+
+/// x25519_public(secret: bytes) -> bytes
+///
+/// The public key for a 32-byte secret, clamped per RFC 7748.
+#[pyfunction]
+fn x25519_public(py: Python<'_>, secret: &[u8]) -> PyResult<Py<PyBytes>> {
+    let secret = hash32("secret", secret)?;
+    Ok(PyBytes::new(py, &session_mod::x25519_public(&secret)).unbind())
+}
+
+/// x25519_agree(secret: bytes, peer_public: bytes) -> bytes
+///
+/// Raises `ValueError` if the peer sent a low-order point, which would yield a
+/// shared secret the attacker already knows.
+#[pyfunction]
+fn x25519_agree(py: Python<'_>, secret: &[u8], peer_public: &[u8]) -> PyResult<Py<PyBytes>> {
+    let secret = hash32("secret", secret)?;
+    let shared = session_mod::x25519_agree(&secret, peer_public).map_err(value_err)?;
+    Ok(PyBytes::new(py, &shared).unbind())
+}
+
+/// session_transcript(epk_payer: bytes, epk_merchant: bytes) -> bytes
+///
+/// `SHA256("BCHS|v1|" + epk_payer + epk_merchant)`. The payer's key is always
+/// first, whichever side computes it.
+#[pyfunction]
+fn session_transcript(py: Python<'_>, epk_payer: &[u8], epk_merchant: &[u8]) -> Py<PyBytes> {
+    PyBytes::new(py, &session_mod::transcript(epk_payer, epk_merchant)).unbind()
+}
+
+/// derive_session_keys(shared: bytes, epk_payer: bytes, epk_merchant: bytes,
+///                     is_payer: bool) -> dict
+///
+/// Returns `{"send_key", "recv_key", "transcript": bytes, "sas": str}`.
+///
+/// A dict rather than a custom class on purpose: a PyO3 class would need a
+/// `__repr__`, and the obvious one would print session keys into any traceback
+/// that formatted it.
+#[pyfunction]
+fn derive_session_keys<'py>(
+    py: Python<'py>,
+    shared: &[u8],
+    epk_payer: &[u8],
+    epk_merchant: &[u8],
+    is_payer: bool,
+) -> PyResult<Bound<'py, PyDict>> {
+    let keys = session_mod::derive_session_keys(shared, epk_payer, epk_merchant, is_payer)
+        .map_err(value_err)?;
+
+    let out = PyDict::new(py);
+    out.set_item("send_key", PyBytes::new(py, &keys.send_key))?;
+    out.set_item("recv_key", PyBytes::new(py, &keys.recv_key))?;
+    out.set_item("transcript", PyBytes::new(py, &keys.transcript))?;
+    out.set_item("sas", keys.sas)?;
+    Ok(out)
+}
+
+/// session_auth_message(role: str, transcript: bytes) -> bytes
+///
+/// `"BCAUTH|v1|{role}|" + transcript`, the message each side signs with its
+/// long-term key to authenticate the handshake.
+#[pyfunction]
+fn session_auth_message(py: Python<'_>, role: &str, transcript: &[u8]) -> Py<PyBytes> {
+    PyBytes::new(py, &session_mod::auth_message(role, transcript)).unbind()
+}
+
+/// session_nonce(counter: int) -> bytes
+///
+/// The 12-byte AES-GCM nonce for a message index: zeros, then the counter
+/// big-endian in the last eight bytes.
+#[pyfunction]
+fn session_nonce(py: Python<'_>, counter: u64) -> Py<PyBytes> {
+    PyBytes::new(py, &session_mod::nonce(counter)).unbind()
+}
+
+/// session_seal(send_key: bytes, counter: int, plaintext: bytes) -> bytes
+///
+/// One AES-256-GCM record at an explicit counter. Stateless on purpose: the
+/// counter is a parameter rather than hidden in an object, so a caller cannot
+/// reuse a nonce by letting two objects share a key without noticing.
+#[pyfunction]
+fn session_seal(
+    py: Python<'_>,
+    send_key: &[u8],
+    counter: u64,
+    plaintext: &[u8],
+) -> PyResult<Py<PyBytes>> {
+    let key = hash32("send_key", send_key)?;
+    Ok(PyBytes::new(py, &session_mod::seal_at(&key, counter, plaintext)).unbind())
+}
+
+/// session_open(recv_key: bytes, counter: int, ciphertext: bytes) -> bytes
+///
+/// Raises `ValueError` if the record fails authentication -- tampered,
+/// truncated, or sealed under a different key or counter.
+#[pyfunction]
+fn session_open(
+    py: Python<'_>,
+    recv_key: &[u8],
+    counter: u64,
+    ciphertext: &[u8],
+) -> PyResult<Py<PyBytes>> {
+    let key = hash32("recv_key", recv_key)?;
+    let plain = session_mod::open_at(&key, counter, ciphertext).map_err(value_err)?;
+    Ok(PyBytes::new(py, &plain).unbind())
+}
+
+// ---------------------------------------------------------------------------
 // Misc
 // ---------------------------------------------------------------------------
 
@@ -341,6 +473,16 @@ fn bluecash_crypto(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(merkle_root, m)?)?;
     m.add_function(wrap_pyfunction!(merkle_proof, m)?)?;
     m.add_function(wrap_pyfunction!(merkle_verify_inclusion, m)?)?;
+
+    m.add_function(wrap_pyfunction!(hkdf_sha256, m)?)?;
+    m.add_function(wrap_pyfunction!(x25519_public, m)?)?;
+    m.add_function(wrap_pyfunction!(x25519_agree, m)?)?;
+    m.add_function(wrap_pyfunction!(session_transcript, m)?)?;
+    m.add_function(wrap_pyfunction!(derive_session_keys, m)?)?;
+    m.add_function(wrap_pyfunction!(session_auth_message, m)?)?;
+    m.add_function(wrap_pyfunction!(session_nonce, m)?)?;
+    m.add_function(wrap_pyfunction!(session_seal, m)?)?;
+    m.add_function(wrap_pyfunction!(session_open, m)?)?;
 
     m.add_function(wrap_pyfunction!(random_bytes, m)?)?;
 
