@@ -16,6 +16,13 @@ databases:
     databaseName: bluecash
     user: bluecash
     plan: free
+    # Must match the web service's region. A database's internal hostname only
+    # resolves inside its own region, and `fromDatabase` always injects the
+    # internal connection string -- so a database left in the default region
+    # (oregon) is unreachable from a service in singapore, which fails as
+    # `psycopg.OperationalError: [Errno -2] Name or service not known` during
+    # the entrypoint's migration step.
+    region: singapore
     # Free PostgreSQL on Render expires 30 days after creation. Note the date:
     # when it goes, the mint identity goes with it and every wallet must be
     # reset. For anything beyond a demo this needs a paid plan or a key backup.
