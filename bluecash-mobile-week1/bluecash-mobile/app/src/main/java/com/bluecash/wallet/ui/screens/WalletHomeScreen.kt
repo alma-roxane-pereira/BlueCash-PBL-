@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.bluecash.wallet.AppContainer
 import com.bluecash.wallet.permissions.rememberBlePermissionsState
 import com.bluecash.wallet.ui.components.ScreenColumn
+import com.bluecash.wallet.ui.components.BalanceCard
 import com.bluecash.wallet.ui.components.SectionCard
 import kotlin.concurrent.thread
 import com.bluecash.wallet.ui.FriendlyError
@@ -43,14 +44,11 @@ fun WalletHomeScreen() {
         Text("BlueCash Wallet", style = MaterialTheme.typography.headlineMedium)
         Text("Offline peer-to-peer payments over Bluetooth.", style = MaterialTheme.typography.bodyMedium)
 
-        SectionCard("Balance") {
-            Text("₹${AppContainer.balance}", style = MaterialTheme.typography.displaySmall)
-            Text(
-                "${AppContainer.tokenCount} token(s)" +
-                    if (AppContainer.pendingAmount > 0) "  ·  ₹${AppContainer.pendingAmount} locked (unconfirmed payment)" else "",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
+        BalanceCard(
+            balance = AppContainer.balance,
+            tokens = AppContainer.tokenCount,
+            pending = AppContainer.pendingAmount,
+        )
 
         if (!AppContainer.hasIdentity || !AppContainer.registered) {
             SectionCard("Finish setup") {
@@ -59,10 +57,10 @@ fun WalletHomeScreen() {
                 Text("Then come back here to add money.", style = MaterialTheme.typography.bodySmall)
             }
         } else {
-            SectionCard("Add money (mint tokens)") {
+            SectionCard("Add money") {
                 Text(
-                    if (AppContainer.usingSimulatedMint()) "Using the simulated mint inside the app (demo money)."
-                    else "Using server ${AppContainer.serverUrl}",
+                    if (AppContainer.usingSimulatedMint()) "Demo money, from the simulated mint inside the app."
+                    else "Connected to your mint.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 OutlinedTextField(

@@ -177,7 +177,7 @@ fun SettingsScreen() {
                     style = MaterialTheme.typography.bodySmall,
                 )
                 OutlinedButton(onClick = {
-                    thread { val n = AppContainer.wallet.releasePending(); releaseMessage = "Released $n token(s)"; AppContainer.refreshState() }
+                    thread { val n = AppContainer.wallet.releasePending(); releaseMessage = if (n == 1) "Released 1 token" else "Released $n tokens"; AppContainer.refreshState() }
                 }) { Text("Release locked tokens") }
                 releaseMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
