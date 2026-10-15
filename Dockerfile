@@ -11,20 +11,26 @@
 #     -e BLUECASH_DATABASE_URL="postgresql+psycopg://user:pass@host/db" bluecash-mint
 
 # --- stage 1: compile the Rust core into a wheel ----------------------------
-FROM rust:1.83-slim-bookworm AS crypto
+FROM python:3.12-slim-bookworm AS crypto
 
-# `python3-dev` provides the headers PyO3 links against; `patchelf` is what
-# maturin uses to fix up the shared object's runtime paths.
+# Install Rust 1.88 and the native build tools.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-dev python3-pip python3-venv patchelf \
+        build-essential curl ca-certificates patchelf \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --break-system-packages --no-cache-dir maturin==1.15.0
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain 1.88.0 --profile minimal
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN pip install --no-cache-dir maturin==1.15.0
 
 WORKDIR /build
-# Manifests first, so a change to the source does not invalidate the cached
-# dependency compile -- which is most of the build time.
-COPY crates/bluecash-crypto/Cargo.toml crates/bluecash-crypto/Cargo.lock crates/bluecash-crypto/pyproject.toml ./
+
+COPY crates/bluecash-crypto/Cargo.toml \
+     crates/bluecash-crypto/Cargo.lock \
+     crates/bluecash-crypto/pyproject.toml ./
+
 RUN mkdir -p src && echo "fn main() {}" > src/lib.rs \
     && cargo fetch --locked \
     && rm -rf src
@@ -32,12 +38,8 @@ RUN mkdir -p src && echo "fn main() {}" > src/lib.rs \
 COPY crates/bluecash-crypto/src ./src
 COPY crates/bluecash-crypto/tests ./tests
 
-# `offline = true` in pyproject.toml is a convenience for the laptop, where the
-# registry is already warm. Here the dependencies were just fetched, so the
-# flag only gets in the way.
 RUN sed -i 's/^offline = true/offline = false/' pyproject.toml \
     && maturin build --release --features python --out /wheels
-
 # --- stage 2: the runtime ---------------------------------------------------
 FROM python:3.12-slim-bookworm AS runtime
 
