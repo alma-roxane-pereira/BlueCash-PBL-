@@ -51,7 +51,17 @@ identity several times a day.
    ```bash
    curl https://bluecash-mint.onrender.com/health
    # {"status":"ok","service":"bluecash-mint","version":"0.1.0"}
+
+   # The status page: mint fingerprint, denominations, audit root.
+   curl -s -o /dev/null -w '%{http_code}\n' https://bluecash-mint.onrender.com/
+   # 200
    ```
+
+   `/docs`, `/redoc` and `/openapi.json` all return 404, and that is deliberate.
+   `BLUECASH_ENV=production` withholds the schema as well as the browser that
+   renders it: hiding only `/docs` would leave every route and field listed for
+   anyone who asked for the JSON. Set `BLUECASH_ENV=development` in the Render
+   dashboard if you want the API browser during a demo.
 
 6. Record the mint fingerprint immediately, so you can prove later whether the
    identity has changed:
@@ -80,21 +90,62 @@ they are two small tables, and they are the whole mint.
 
 ## Running the container locally
 
-Worth doing once before deploying, because it is the same image Render builds:
+Worth doing once before deploying, because it is the same image Render builds.
+
+Everything below is disposable: a dedicated network, a database whose port is
+never published, and the mint bound to loopback on a port that collides with
+nothing. `--rm` on both containers means no storage survives them.
 
 ```bash
-docker build -t bluecash-mint .
+docker build -t bluecash-mint:local .
 
-docker run --rm -d --name bluecash-db \
-  -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=bluecash -p 5432:5432 postgres:16
+docker network create bc-smoke-net
 
-docker run --rm -p 8000:8000 \
-  -e BLUECASH_DATABASE_URL="postgresql://postgres:dev@host.docker.internal:5432/bluecash" \
-  bluecash-mint
+# No host mount, no named volume, and no -p: nothing outside the network can
+# reach the database.
+docker run -d --rm --name bc-smoke-db --network bc-smoke-net \
+  -e POSTGRES_PASSWORD=smoketest \
+  -e POSTGRES_USER=bluecash \
+  -e POSTGRES_DB=bluecash \
+  postgres:16-alpine
+
+docker exec bc-smoke-db pg_isready -U bluecash -d bluecash
+
+# 127.0.0.1:18082 -- loopback only, and clear of the development ports.
+docker run -d --rm --name bc-smoke-mint --network bc-smoke-net \
+  -e BLUECASH_DATABASE_URL="postgresql://bluecash:smoketest@bc-smoke-db:5432/bluecash" \
+  -p 127.0.0.1:18082:8000 \
+  bluecash-mint:local
+
+docker logs bc-smoke-mint
+curl -s http://127.0.0.1:18082/health
 ```
 
+Tear it down with `docker stop bc-smoke-mint bc-smoke-db && docker network rm
+bc-smoke-net`. Nothing persists: neither container has a volume.
+
 `postgresql://` is rewritten to `postgresql+psycopg://` by `Settings`, so the
-URL a host hands you works unchanged.
+URL a host hands you works unchanged. This run is what exercises that rewrite:
+without it the mint fails at startup with `ModuleNotFoundError: psycopg2`,
+because psycopg2 is not a dependency of this project.
+
+### What the local run established
+
+Running exactly the above against `postgres:16-alpine`:
+
+* Migrations applied under `PostgresqlImpl` -- the first time the schema had
+  been built anywhere but SQLite.
+* Bootstrap produced one Ed25519 identity and four RSA denomination keys
+  (10, 50, 100 and 500 INR), with an empty audit log.
+* `GET /health` and `GET /` both returned 200.
+* Startup took about two seconds, and the container settled at roughly 64 MB
+  -- well inside a free instance's 512 MB.
+
+Two seconds is a laptop figure, and the first boot against an *empty* database
+is the slow one: it generates four RSA-2048 keys before the port opens. On a
+shared-CPU host that can take appreciably longer, and a health check impatient
+enough to give up will mark the deploy failed when nothing is wrong. Watch the
+first deploy's logs. Later boots reuse the stored keys and start quickly.
 
 ## Configuration
 
