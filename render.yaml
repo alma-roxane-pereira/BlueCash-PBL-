@@ -1,0 +1,57 @@
+# Render blueprint for the BlueCash mint.
+#
+# Committing this means the deployment is reviewable and reproducible rather
+# than a set of fields someone typed into a dashboard once and cannot recall.
+#
+# The database is the part that matters. The mint's Ed25519 identity and its
+# four RSA denomination keys are rows in it, and every wallet pins `mint_pub`
+# on first contact and refuses a mint whose key later changes. Render's
+# filesystem is ephemeral -- wiped on redeploy and on restart after idling --
+# so SQLite on disk would mean a new mint identity every deploy, and every
+# wallet that had registered would refuse to talk to it. Hence managed
+# PostgreSQL, whose connection string is injected below.
+
+databases:
+  - name: bluecash-mint-db
+    databaseName: bluecash
+    user: bluecash
+    plan: free
+    # Free PostgreSQL on Render expires 30 days after creation. Note the date:
+    # when it goes, the mint identity goes with it and every wallet must be
+    # reset. For anything beyond a demo this needs a paid plan or a key backup.
+
+services:
+  - type: web
+    name: bluecash-mint
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    # The build context is the repository root: the image compiles the Rust
+    # core from `crates/` as well as installing the backend.
+    dockerContext: .
+    region: singapore
+    branch: main
+
+    # `/health` touches no database and no key material, so it answers while
+    # the rest of the system is still starting or misconfigured -- which is
+    # what a health check should measure.
+    healthCheckPath: /health
+
+    envVars:
+      - key: BLUECASH_DATABASE_URL
+        fromDatabase:
+          name: bluecash-mint-db
+          # The internal connection string: this traffic never leaves Render.
+          property: connectionString
+
+      - key: BLUECASH_ENV
+        value: production
+
+      - key: BLUECASH_LOG_LEVEL
+        value: INFO
+
+      # Play Integrity needs Google credentials, which are not configured. The
+      # backend stores the token and skips verification; being explicit here
+      # keeps that from looking like an oversight.
+      - key: BLUECASH_VERIFY_PLAY_INTEGRITY
+        value: "false"
