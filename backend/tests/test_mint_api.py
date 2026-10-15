@@ -344,6 +344,138 @@ def test_issue_rejects_a_revoked_credential(client, configured):
     assert "revoked" in response.text.lower()
 
 
+# ---------------------------------------------------------------------------
+# revoked identities cannot register again
+# ---------------------------------------------------------------------------
+#
+# Revocations are keyed by `cred_id`, but `cred_id` is minted fresh on every
+# registration. The stable identity is `c0`: it is what a recovered double-spend
+# secret opens, and it survives a wallet reset on the client. Without a check at
+# registration a revoked payer could reset, register again, and mint as if
+# nothing had happened -- the revocation would still exist, pointing at a
+# credential nobody uses any more.
+
+
+def _revoke(cred_id: str, reason: str = "test") -> None:
+    """Insert a revocation directly, as `test_issue_rejects_a_revoked_credential` does."""
+    from app.db.models import Revocation
+    from app.db.session import session_scope
+
+    with session_scope() as session:
+        session.add(Revocation(cred_id=cred_id, reason=reason, ts=1))
+
+
+def _device_count() -> int:
+    from sqlalchemy import select
+
+    from app.db.models import Device
+    from app.db.session import session_scope
+
+    with session_scope() as session:
+        return len(session.scalars(select(Device)).all())
+
+
+def test_register_rejects_a_revoked_identity(client, configured):
+    """The same `c0` registering a second time, after revocation."""
+    wallet = Wallet()
+    assert wallet.register(client).status_code == 200
+    _revoke(wallet.credential["cred_id"])
+
+    # A reset client keeps its keys, so this is byte-for-byte the same request
+    # shape it sent the first time.
+    response = client.post("/mint/registerDevice", json=wallet.register_body())
+    assert response.status_code == 403, response.text
+    assert "identity revoked" in response.text.lower()
+
+
+def test_register_still_works_for_an_unrevoked_identity(client, configured):
+    """The guard must not become a blanket refusal."""
+    revoked = Wallet()
+    revoked.register(client)
+    _revoke(revoked.credential["cred_id"])
+
+    innocent = Wallet()
+    response = innocent.register(client)
+    assert response.status_code == 200, response.text
+    assert innocent.credential["cred_id"] != revoked.credential["cred_id"]
+
+
+def test_a_new_cred_id_cannot_bypass_revocation(client, configured):
+    """The refusal must land before a new credential exists to escape through.
+
+    `cred_id` is a fresh uuid4 per registration, so a guard that ran after the
+    insert would leave an unrevoked credential for the same identity.
+    """
+    wallet = Wallet()
+    wallet.register(client)
+    first_cred = wallet.credential["cred_id"]
+    _revoke(first_cred)
+
+    before = _device_count()
+    response = client.post("/mint/registerDevice", json=wallet.register_body())
+    assert response.status_code == 403
+    assert _device_count() == before, "no device row may be created for a revoked identity"
+    assert "cred_id" not in response.text
+
+
+def test_revoked_identity_cannot_mint_after_attempted_reregistration(client, configured):
+    """End to end, against a revocation the mint produced itself.
+
+    Uses a real double-spend rather than an inserted row, so the whole path --
+    secret recovery, revocation, refused re-registration, refused issuance -- is
+    exercised as it runs in production.
+    """
+    from .test_settlement_api import Payer, build_receipt, settle
+
+    _, keys = get_keys(client)
+    key = pick(keys)
+    payer = Payer()
+    payer.register(client)
+    token = payer.mint_token(client, key)
+
+    shop_a, shop_b = Wallet(), Wallet()
+    shop_a.register(client)
+    shop_b.register(client)
+
+    settle(client, build_receipt(payer, shop_a, token, "ctx-a"))
+    second = settle(client, build_receipt(payer, shop_b, token, "ctx-b"))
+    assert second["results"][0]["status"] == "FRAUD"
+
+    # Re-registering under the same identity is refused ...
+    again = client.post("/mint/registerDevice", json=payer.register_body())
+    assert again.status_code == 403
+    assert "identity revoked" in again.text.lower()
+
+    # ... and the original credential still cannot mint.
+    issue = client.post("/mint/issue", json=payer.issue_body(key))
+    assert issue.status_code == 403
+    assert "revoked" in issue.text.lower()
+
+
+def test_canonicalisation_cannot_evade_the_check(client, configured):
+    """A different spelling of the same `c0` is the same identity.
+
+    `c0_hex` is stored canonically, so a raw-string comparison would let a
+    leading zero through. The signature covers the spelling actually sent, so it
+    has to be re-signed for the padded form.
+    """
+    wallet = Wallet()
+    wallet.register(client)
+    _revoke(wallet.credential["cred_id"])
+
+    padded = "0" + wallet.c0
+    ts = 1_700_000_000_002
+    body = wallet.register_body(
+        ts=ts,
+        c0=padded,
+        sig=wallet.sign(f"BCREG|v1|{wallet.device_pub}|{padded}|{ts}"),
+    )
+
+    response = client.post("/mint/registerDevice", json=body)
+    assert response.status_code == 403, response.text
+    assert "identity revoked" in response.text.lower()
+
+
 def test_issue_rejects_a_bad_signature(client):
     _, keys = get_keys(client)
     wallet = Wallet()

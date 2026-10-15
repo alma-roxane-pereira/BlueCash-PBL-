@@ -86,6 +86,34 @@ The response carries no `cred_id` and no `key_id`: the audit log is public, and
 neither which device was issued a token nor its denomination is needed to check
 inclusion.
 
+### Revoked identities cannot register again (divergence from the reference)
+
+`POST /mint/registerDevice` returns **403 `identity revoked`** when the submitted
+`c0` belongs to an identity that has been revoked. Neither `API_CONTRACT.md` nor
+the reference server does this.
+
+Revocations are keyed by `cred_id`, and `cred_id` is minted fresh on every
+registration. The stable identity is `c0`: it is what a recovered double-spend
+secret opens, and it survives a wallet reset on the client. Without this check a
+revoked payer could reset the wallet, register again for a new `cred_id` under
+the same `c0`, and mint as if nothing had happened -- the revocation would still
+exist, pointing at a credential nobody uses any more.
+
+The check joins `revocations` to `devices` on the existing foreign key and
+filters on the existing `ix_devices_c0_hex` index, so no migration is needed and
+revocation rows recorded before this change are covered automatically. `c0` is
+compared canonically, matching how `c0_hex` is stored, so a different spelling of
+the same value does not evade it.
+
+**It does not block a genuinely new identity.** A client that generates a fresh
+`id_secret`, and therefore a fresh `c0`, is a new identity to the mint and may
+register. That is inherent to the design -- `c0` *is* the identity -- and closing
+it would need device attestation rather than a database check.
+
+**Revocation is terminal.** There is no un-revoke path, so this change makes a
+revocation permanently binding on that identity. An operational recovery
+mechanism is worth having before any real deployment.
+
 ### Input limits (divergence from the reference)
 
 Neither `API_CONTRACT.md` nor the reference server bounds these. Both limits are

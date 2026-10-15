@@ -156,6 +156,20 @@ def register_device(
     if not protocol.is_subgroup_element(body.c0):
         raise _bad_request("invalid identity commitment")
 
+    # `c0` is the stable identity: it is what a recovered double-spend secret
+    # opens, and it survives a wallet reset on the client. Revocations are keyed
+    # by `cred_id`, so without this a revoked payer could reset, register again
+    # for a fresh `cred_id` under the same `c0`, and mint as if nothing had
+    # happened. Compared canonically, because that is how `c0_hex` is stored.
+    c0_hex = _canonical(body.c0, "c0")
+    if session.scalar(
+        select(Revocation.cred_id)
+        .join(Device, Device.cred_id == Revocation.cred_id)
+        .where(Device.c0_hex == c0_hex)
+        .limit(1)
+    ):
+        raise _forbidden("identity revoked")
+
     cred_id = uuid.uuid4().hex
     expiry_ms = mint_keys.now_ms() + mint_keys.CREDENTIAL_LIFETIME_MS
 
@@ -169,7 +183,7 @@ def register_device(
         Device(
             cred_id=cred_id,
             device_pub=body.device_pub,
-            c0_hex=_canonical(body.c0, "c0"),
+            c0_hex=c0_hex,
             expiry_ms=expiry_ms,
             mint_sig=mint_sig,
             integrity_token=body.integrity_token,
