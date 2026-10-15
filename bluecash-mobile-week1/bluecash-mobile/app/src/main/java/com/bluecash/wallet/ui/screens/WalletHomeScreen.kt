@@ -1,5 +1,6 @@
 package com.bluecash.wallet.ui.screens
 
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +28,7 @@ import com.bluecash.wallet.ui.components.SectionCard
 import java.text.DateFormat
 import java.util.Date
 import kotlin.concurrent.thread
+import com.bluecash.wallet.ui.components.BalanceCard
 
 @Composable
 fun WalletHomeScreen() {
@@ -41,11 +43,11 @@ fun WalletHomeScreen() {
         Text("BlueCash Wallet", style = MaterialTheme.typography.headlineMedium)
         Text("Offline peer-to-peer payments over Bluetooth.", style = MaterialTheme.typography.bodyMedium)
 
-        SectionCard("Balance") {
-            Text("₹${AppContainer.balance}", style = MaterialTheme.typography.displaySmall)
+        BalanceCard {
+            Text("₹${AppContainer.balance}", style = MaterialTheme.typography.displayMedium)
             Text(
                 "${AppContainer.tokenCount} token(s)" +
-                    if (AppContainer.pendingAmount > 0) "  ·  ₹${AppContainer.pendingAmount} locked (unconfirmed payment)" else "",
+                        if (AppContainer.pendingAmount > 0) "  ·  ₹${AppContainer.pendingAmount} locked (unconfirmed payment)" else "",
                 style = MaterialTheme.typography.bodyMedium,
             )
         }

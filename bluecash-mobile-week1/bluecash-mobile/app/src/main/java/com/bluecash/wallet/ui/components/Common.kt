@@ -48,7 +48,22 @@ fun SectionCard(title: String, content: @Composable ColumnScope.() -> Unit) {
         }
     }
 }
-
+/** The balance gets its own treatment: this is the number the screen exists for. */
+@Composable
+fun BalanceCard(content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ),
+    ) {
+        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Balance", style = MaterialTheme.typography.labelLarge)
+            content()
+        }
+    }
+}
 /**
  * The 6-digit code both phones derive from the secure-channel keys. If the codes match, no
  * one is sitting in the middle of the connection. The human comparison is the security step.
