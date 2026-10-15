@@ -120,8 +120,7 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     let key = if key.is_empty() { &zeros[..] } else { key };
     // Fully qualified: `aes_gcm::KeyInit` is also in scope and offers the
     // same constructor name.
-    let mut mac =
-        <HmacSha256 as Mac>::new_from_slice(key).expect("HMAC accepts any key length");
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data);
     mac.finalize().into_bytes().into()
 }

@@ -166,8 +166,7 @@ fn the_sas_is_six_digits_zero_padded() {
         let payer = EphemeralKeypair::generate();
         let merchant = EphemeralKeypair::generate();
         let shared = payer.agree(&merchant.public()).unwrap();
-        let keys =
-            derive_session_keys(&shared, &payer.public(), &merchant.public(), true).unwrap();
+        let keys = derive_session_keys(&shared, &payer.public(), &merchant.public(), true).unwrap();
 
         assert_eq!(keys.sas.len(), 6, "sas was {:?}", keys.sas);
         assert!(keys.sas.chars().all(|c| c.is_ascii_digit()));
@@ -184,13 +183,7 @@ fn the_sas_is_the_four_byte_prefix_reduced() {
     let epk_p = [0x01u8; 32];
     let epk_m = [0x02u8; 32];
 
-    let raw = hkdf_sha256(
-        &shared,
-        &transcript(&epk_p, &epk_m),
-        b"bluecash sas",
-        4,
-    )
-    .unwrap();
+    let raw = hkdf_sha256(&shared, &transcript(&epk_p, &epk_m), b"bluecash sas", 4).unwrap();
     let v = u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]);
 
     let keys = derive_session_keys(&shared, &epk_p, &epk_m, true).unwrap();
@@ -348,7 +341,10 @@ fn many_records_stay_in_step() {
     let (mut payer, mut merchant) = channels();
     for i in 0..50u32 {
         let msg = format!("record {i}");
-        assert_eq!(merchant.open(&payer.seal(msg.as_bytes())).unwrap(), msg.as_bytes());
+        assert_eq!(
+            merchant.open(&payer.seal(msg.as_bytes())).unwrap(),
+            msg.as_bytes()
+        );
     }
     assert_eq!(payer.sent(), 50);
     assert_eq!(merchant.received(), 50);
@@ -428,7 +424,10 @@ fn a_record_from_a_different_session_is_rejected() {
     let (mut payer_a, _) = channels();
     let (_, mut merchant_b) = channels();
     let sealed = payer_a.seal(b"pay 10");
-    assert_eq!(merchant_b.open(&sealed), Err(SessionError::DecryptionFailed));
+    assert_eq!(
+        merchant_b.open(&sealed),
+        Err(SessionError::DecryptionFailed)
+    );
 }
 
 #[test]
@@ -475,8 +474,14 @@ fn secrets_do_not_appear_in_debug_output() {
 
     let (payer, _) = handshake();
     let rendered = format!("{payer:?}");
-    assert!(!rendered.contains(&hex::encode(payer.send_key)), "{rendered}");
-    assert!(!rendered.contains(&hex::encode(payer.recv_key)), "{rendered}");
+    assert!(
+        !rendered.contains(&hex::encode(payer.send_key)),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains(&hex::encode(payer.recv_key)),
+        "{rendered}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -516,7 +521,16 @@ fn print_kotlin_vectors() {
     println!("p2m          {}", hex::encode(keys.send_key));
     println!("m2p          {}", hex::encode(keys.recv_key));
     println!("sas          {}", keys.sas);
-    println!("authPayer    {}", hex::encode(auth_message("payer", &keys.transcript)));
-    println!("record0      {}", hex::encode(channel.seal(b"BCSPEND|v1|t|c|10")));
-    println!("record1      {}", hex::encode(channel.seal(b"BCSPEND|v1|t|c|10")));
+    println!(
+        "authPayer    {}",
+        hex::encode(auth_message("payer", &keys.transcript))
+    );
+    println!(
+        "record0      {}",
+        hex::encode(channel.seal(b"BCSPEND|v1|t|c|10"))
+    );
+    println!(
+        "record1      {}",
+        hex::encode(channel.seal(b"BCSPEND|v1|t|c|10"))
+    );
 }
