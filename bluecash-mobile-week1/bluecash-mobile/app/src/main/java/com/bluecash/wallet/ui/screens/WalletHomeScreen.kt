@@ -24,9 +24,11 @@ import com.bluecash.wallet.AppContainer
 import com.bluecash.wallet.permissions.rememberBlePermissionsState
 import com.bluecash.wallet.ui.components.ScreenColumn
 import com.bluecash.wallet.ui.components.SectionCard
-import java.text.DateFormat
-import java.util.Date
 import kotlin.concurrent.thread
+import com.bluecash.wallet.ui.FriendlyError
+import com.bluecash.wallet.ui.HistoryText
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.width
 
 @Composable
 fun WalletHomeScreen() {
@@ -83,7 +85,7 @@ fun WalletHomeScreen() {
                                 AppContainer.wallet.mint(AppContainer.mintApi(), amount) { message = it }
                                 "Minted ₹$amount ✓"
                             } catch (e: Exception) {
-                                "Failed: ${e.message}"
+                                FriendlyError.of(e.message)
                             }
                             busy = false
                             AppContainer.refreshState()
@@ -114,11 +116,22 @@ fun WalletHomeScreen() {
                 style = MaterialTheme.typography.bodyMedium,
             )
             if (AppContainer.recent.isEmpty()) Text("Nothing yet.", style = MaterialTheme.typography.bodySmall)
-            val fmt = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
             AppContainer.recent.forEach { e ->
-                Column {
-                    Text(e.type.replace('_', ' '), style = MaterialTheme.typography.labelLarge)
-                    Text(fmt.format(Date(e.ts)) + "  ·  " + e.payload.take(70), style = MaterialTheme.typography.bodySmall)
+                val row = HistoryText.format(e)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        row.icon,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.width(28.dp),
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(row.title, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            listOf(row.time, row.detail).filter { it.isNotEmpty() }.joinToString("  ·  "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
