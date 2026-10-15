@@ -592,3 +592,95 @@ class EndToEndTests {
         assertNull(alice.wallet.planDenominations(5, keys))
     }
 }
+
+/**
+ * The BLE session crypto, checked against the Rust core.
+ *
+ * Both sides of a payment are supposed to derive the same keys, but until now
+ * the handshake existed only here, so "the same" had nothing to be measured
+ * against. These values come from `crates/bluecash-crypto/tests/session.rs`
+ * (`cargo test --test session -- --ignored --nocapture print_kotlin_vectors`),
+ * where the same construction is built on dalek and RustCrypto rather than
+ * BouncyCastle and the JCE. Two independent implementations agreeing byte for
+ * byte is the evidence that a phone and the mint can actually talk.
+ *
+ * If one of these fails after a change, the change broke interoperability --
+ * regenerating the vectors would only hide that.
+ */
+class SessionVectorTests {
+    private val payerSk = "11".repeat(32)
+    private val merchantSk = "22".repeat(32)
+
+    private fun priv(hex: String) =
+        org.bouncycastle.crypto.params.X25519PrivateKeyParameters(hex.unhex(), 0)
+
+    @Test fun x25519AgreementMatchesTheRustCore() {
+        val payer = priv(payerSk)
+        val merchant = priv(merchantSk)
+
+        assertEquals("7b4e909bbe7ffe44c465a220037d608ee35897d31ef972f07f74892cb0f73f13",
+            payer.generatePublicKey().encoded.hex())
+        assertEquals("0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20",
+            merchant.generatePublicKey().encoded.hex())
+
+        val shared = X25519.agree(payer, merchant.generatePublicKey().encoded)
+        assertEquals("9e004098efc091d4ec2663b4e9f5cfd4d7064571690b4bea97ab146ab9f35056", shared.hex())
+        // Agreement is symmetric, so the merchant reaches the same secret.
+        assertEquals(shared.hex(), X25519.agree(merchant, payer.generatePublicKey().encoded).hex())
+    }
+
+    @Test fun handshakeDerivationMatchesTheRustCore() {
+        val payerPub = priv(payerSk).generatePublicKey().encoded
+        val merchantPub = priv(merchantSk).generatePublicKey().encoded
+        val shared = X25519.agree(priv(payerSk), merchantPub)
+
+        val keys = Handshake.derive(shared, payerPub, merchantPub, isPayer = true)
+
+        assertEquals("d0e766d338cb746c402f40c6e2d03d0d0da6ddb1549895c6251e3a2b5f5350f7",
+            keys.transcript.hex())
+        assertEquals("f8925b865e4a1c63486c812176a53e808dcfac4e5e35c2229cc5198a4a4777f5",
+            keys.sendKey.hex())
+        assertEquals("5c965e7a61f2d9942509099d2cb6de042cfa02999247062930d25002a63b0337",
+            keys.recvKey.hex())
+        assertEquals("430971", keys.sas)
+        assertEquals("4243415554487c76317c70617965727c" + keys.transcript.hex(),
+            Handshake.authMessage("payer", keys.transcript).hex())
+
+        // The merchant derives the mirror image of the same session.
+        val asMerchant = Handshake.derive(shared, payerPub, merchantPub, isPayer = false)
+        assertEquals(keys.sendKey.hex(), asMerchant.recvKey.hex())
+        assertEquals(keys.recvKey.hex(), asMerchant.sendKey.hex())
+        assertEquals(keys.sas, asMerchant.sas)
+    }
+
+    @Test fun sealedRecordsMatchTheRustCore() {
+        val payerPub = priv(payerSk).generatePublicKey().encoded
+        val merchantPub = priv(merchantSk).generatePublicKey().encoded
+        val shared = X25519.agree(priv(payerSk), merchantPub)
+        val keys = Handshake.derive(shared, payerPub, merchantPub, isPayer = true)
+
+        val channel = SecureChannel(keys.sendKey, keys.recvKey)
+        val plain = utf8("BCSPEND|v1|t|c|10")
+
+        // The same plaintext twice: different ciphertext, because the implicit
+        // counter advances. Both records are pinned, so a counter that failed to
+        // advance -- the one bug that would be catastrophic here -- is caught.
+        assertEquals("de8d729d41c4138cbe6ecc24f1cae2070d499b6cc7c70c6287797e2b0d9d2b1dd8",
+            channel.seal(plain).hex())
+        assertEquals("ccc590db6d1aff3690112c5149c9bcf13b6f2b4c87b9e7f5d9de3611b89d3f7263",
+            channel.seal(plain).hex())
+    }
+
+    @Test fun aRustSealedRecordOpensHere() {
+        // The direction that matters in production: bytes produced by the other
+        // implementation must decrypt and authenticate on the phone.
+        val payerPub = priv(payerSk).generatePublicKey().encoded
+        val merchantPub = priv(merchantSk).generatePublicKey().encoded
+        val shared = X25519.agree(priv(merchantSk), payerPub)
+        val merchantSide = Handshake.derive(shared, payerPub, merchantPub, isPayer = false)
+
+        val channel = SecureChannel(merchantSide.sendKey, merchantSide.recvKey)
+        val fromRust = "de8d729d41c4138cbe6ecc24f1cae2070d499b6cc7c70c6287797e2b0d9d2b1dd8".unhex()
+        assertEquals("BCSPEND|v1|t|c|10", String(channel.open(fromRust)))
+    }
+}
